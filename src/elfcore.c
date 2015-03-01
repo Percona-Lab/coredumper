@@ -53,6 +53,7 @@ extern "C" {
 #include <sys/time.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
+#include <stdbool.h>
 
 #include "google/coredumper.h"
 #include "linux_syscall_support.h"
@@ -546,17 +547,30 @@ static int GetChar(struct io *io) {
 
 
 /* Place the hex number read from "io" into "*hex".  The first non-hex
- * character is returned (or -1 in the case of end-of-file).
+ * character is returned (or -1 in the case of end-of-file). If read_first
+ * then we start by getting the next char, otherwise we get the current one.
  */
-static int GetHex(struct io *io, size_t *hex) {
+static int GetHexHelper(struct io *io, size_t *hex, bool read_first, int init_char) {
   int ch;
   *hex = 0;
-  while (((ch = GetChar(io)) >= '0' && ch <= '9') ||
-         (ch >= 'A' && ch <= 'F') || (ch >= 'a' && ch <= 'f'))
+  while (((ch = read_first ? GetChar(io) : init_char) >= '0' && ch <= '9') ||
+         (ch >= 'A' && ch <= 'F') || (ch >= 'a' && ch <= 'f')) {
+    read_first = true;
     *hex = (*hex << 4) | (ch < 'A' ? ch - '0' : (ch & 0xF) + 9);
+  }
+
   return ch;
 }
 
+static int GetHex(struct io* io, size_t* hex)
+{
+    return GetHexHelper(io, hex, true, 0);
+}
+
+static int GetHexWithInitChar(struct io* io, size_t* hex, int init_char)
+{
+    return GetHexHelper(io, hex, false, init_char);
+}
 
 /* Computes the amount of leading zeros in a memory region.
  */
@@ -777,10 +791,15 @@ static int CreateElfCore(void *handle,
         int   flags;
       } mappings[num_mappings];
       io.data = io.end = 0;
-      NO_INTR(io.fd = sys_open("/proc/self/maps", O_RDONLY, 0));
+      NO_INTR(io.fd = sys_open("/proc/self/smaps", O_RDONLY, 0));
       if (io.fd >= 0) {
         size_t note_align;
         size_t num_extra_phdrs = 0;
+
+        if ((ch = GetChar(&io)) < 0) {
+          goto read_error;
+        }
+
         /* Parse entries of the form:
          * "^[0-9A-F]*-[0-9A-F]* [r-][w-][x-][p-] [0-9A-F]*.*$"
          */
@@ -788,12 +807,13 @@ static int CreateElfCore(void *handle,
           static const char * const dev_zero = "/dev/zero";
           const char *dev = dev_zero;
           int    j, is_device, is_anonymous;
+          bool has_anonymous_pages = false;
           size_t zeros;
 
           memset(&mappings[i], 0, sizeof(mappings[i]));
 
           /* Read start and end addresses                                    */
-          if (GetHex(&io, &mappings[i].start_address) != '-' ||
+          if (GetHexWithInitChar(&io, &mappings[i].start_address, ch) != '-' ||
               GetHex(&io, &mappings[i].end_address)   != ' ')
             goto read_error;
 
@@ -834,19 +854,66 @@ static int CreateElfCore(void *handle,
           is_device = dev >= dev_zero + 5 &&
                       ((ch != '\n' && ch != ' ') || *dev != '\000');
 
+          /* Skip until end of line                                          */
+          while (ch != '\n') {
+            if (ch < 0)
+              goto read_error;
+            ch = GetChar(&io);
+          }
+
+          ch = GetChar(&io);
+
+          /*
+           * Read attributes for that segment. We detect the start of a new segment
+           * with either digit/lowercase letters: hex characters in addresses are written in lower case
+           * while attributes alaways starts by an uppercase letter.
+           */
+          while (ch >= 0 && !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f'))) {
+            static const char* anonymous_attr = "Anonymous:";
+            const char *anonymous = anonymous_attr;
+            bool is_anonymous_attr = false;
+
+            while (*anonymous && ch == *anonymous) {
+              ch = GetChar(&io);
+              ++anonymous;
+            }
+
+            is_anonymous_attr = *anonymous == 0;
+
+            if (is_anonymous_attr) {
+              /* Check if there is at least one anonymous page */
+
+              /* Skip spaces until we reach the page number */
+              while (ch == ' ') {
+                ch = GetChar(&io);
+              }
+
+              /* Make sure we reached a digit */
+              if (ch < '0' || ch > '9') {
+                goto read_error;
+              }
+
+              has_anonymous_pages = ch != '0';
+            }
+
+            /* Skip until end of line                                          */
+            while (ch != '\n') {
+              if (ch < 0) {
+                goto read_error;
+              }
+
+              ch = GetChar(&io);
+            }
+
+            ch = GetChar(&io);
+          }
+
           /* Drop the private/shared bit. This makes the flags compatible with
            * the ELF access bits
            */
           mappings[i].flags    = (mappings[i].flags >> 1) & PF_MASK;
           if (is_anonymous) {
             mappings[i].flags |= PF_ANONYMOUS;
-          }
-
-          /* Skip until end of line                                          */
-          while (ch != '\n') {
-            if (ch < 0)
-              goto read_error;
-            ch = GetChar(&io);
           }
 
           /* Skip leading zeroed pages (as found in the stack segment)       */
@@ -857,8 +924,12 @@ static int CreateElfCore(void *handle,
             mappings[i].start_address += zeros;
           }
 
-          /* Do not write contents for memory segments that are read-only    */
-          if ((mappings[i].flags & (PF_ANONYMOUS|PF_W)) == 0) {
+          /* Write segment content if one of the following is true:
+           *  - the segment is anonymous
+           *  - the segment is writable
+           *  - the segment has anonymous pages
+           */
+          if ((mappings[i].flags & (PF_ANONYMOUS|PF_W)) == 0 && !has_anonymous_pages) {
             mappings[i].write_size = 0;
           } else {
             mappings[i].write_size = mappings[i].end_address
