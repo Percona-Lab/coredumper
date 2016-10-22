@@ -315,11 +315,18 @@ static void CheckExtraNotesWithReadElf(FILE *input, FILE *output,
     if (line) {
       fputs(buffer, stdout);
       if (!offset) {
-        if (!strncmp(line, "Notes at offset ", 16)) {
-          line += 16;
+        int l = 0;
+        if (!strncmp(line, "Displaying notes found at file offset ", 38)) {
+          l = 38;
+        } else if (!strncmp(line, "Notes at offset ", 16)) {
+          l = 16;
+        }
+        if (l) {
+          line += l;
           offset = hextosizet(line, &line);
           /* Skip the line which contains the table headings.                */
-          fgets(buffer, sizeof(buffer), output);
+          char *o = fgets(buffer, sizeof(buffer), output);
+          assert(o != NULL);
         }
       } else if (line[0] != '+') {
         /* Get the name, its size and the description size.                  */
