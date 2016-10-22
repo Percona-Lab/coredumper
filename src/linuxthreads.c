@@ -605,6 +605,12 @@ int ListAllProcessThreads(void *parameter,
     clone_pid = local_clone((int (*)(void *))ListerThread, &args);
     clone_errno = errno;
 
+    /* Allow the child to ptrace us, if YAMA ptrace protection is enabled. */
+#ifndef PR_SET_PTRACER
+# define PR_SET_PTRACER 0x59616d61
+#endif
+    sys_prctl(PR_SET_PTRACER, clone_pid);
+
     sys_sigprocmask(SIG_SETMASK, &sig_old, &sig_old);
 
     if (clone_pid >= 0) {
