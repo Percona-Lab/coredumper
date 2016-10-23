@@ -134,7 +134,7 @@ static void SigHandler(int signum) {
   return;
 }
 
-static void SigAction(int signum, struct siginfo *si, void *arg) {
+static void SigAction(int signum, siginfo_t *si, void *arg) {
   SigHandler(signum);
 }
 
