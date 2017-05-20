@@ -445,8 +445,8 @@ static ssize_t PipeWriter(void *f, const void *void_buf, size_t bytes) {
           l = fds->max_length;
         }
 
-	/* The following line is needed on MIPS. Not sure why. Compiler bug? */
-	errno = -1;
+        /* The following line is needed on MIPS. Not sure why. Compiler bug? */
+        errno = -1;
 
         NO_INTR(rc = sys_read(fds->compressed_fd, scratch, l));
         if (rc < 0) {
@@ -784,7 +784,6 @@ static int CreateElfCore(void *handle,
     CountAUXV(&num_auxv, &vdso.address);
     /* Read all mappings. This requires re-opening "/proc/self/maps"         */
     /* scope */ {
-      static const int PF_ANONYMOUS = 0x80000000;
       static const int PF_MASK      = 0x00000007;
       struct {
         size_t start_address, end_address, offset, write_size;
@@ -802,12 +801,14 @@ static int CreateElfCore(void *handle,
 
         /* Parse entries of the form:
          * "^[0-9A-F]*-[0-9A-F]* [r-][w-][x-][p-] [0-9A-F]*.*$"
+         * At the start of each iteration, ch contains the first character.
          */
         for (i = 0; i < num_mappings;) {
           static const char * const dev_zero = "/dev/zero";
           const char *dev = dev_zero;
-          int    j, is_device, is_anonymous;
-          bool has_anonymous_pages = false;
+          int j, is_device, is_anonymous;
+          int dontdump = 0;
+          int has_anonymous_pages = 0;
           size_t zeros;
 
           memset(&mappings[i], 0, sizeof(mappings[i]));
@@ -861,60 +862,93 @@ static int CreateElfCore(void *handle,
             ch = GetChar(&io);
           }
 
-          ch = GetChar(&io);
-
           /*
-           * Read attributes for that segment. We detect the start of a new segment
-           * with either digit/lowercase letters: hex characters in addresses are written in lower case
-           * while attributes alaways starts by an uppercase letter.
+           * Parse extra information from smaps.
+           * Each time through this loop we read one full line.
+           * Stop when we've parsed one memory segment's complete description.
+           * Afterwards ch will contain the first character of the next
+           * description, or EOF.
            */
-          while (ch >= 0 && !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f'))) {
-            static const char* anonymous_attr = "Anonymous:";
-            const char *anonymous = anonymous_attr;
-            bool is_anonymous_attr = false;
-
-            while (*anonymous && ch == *anonymous) {
-              ch = GetChar(&io);
-              ++anonymous;
-            }
-
-            is_anonymous_attr = *anonymous == 0;
-
-            if (is_anonymous_attr) {
-              /* Check if there is at least one anonymous page */
-
-              /* Skip spaces until we reach the page number */
-              while (ch == ' ') {
-                ch = GetChar(&io);
-              }
-
-              /* Make sure we reached a digit */
-              if (ch < '0' || ch > '9') {
-                goto read_error;
-              }
-
-              has_anonymous_pages = ch != '0';
-            }
-
-            /* Skip until end of line                                          */
-            while (ch != '\n') {
-              if (ch < 0) {
-                goto read_error;
-              }
-
-              ch = GetChar(&io);
-            }
-
+          while (1) {
             ch = GetChar(&io);
+            if (ch < 1 || (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f'))
+              /* EOF, or new memory segment description start */
+              break;
+
+            switch (ch) {
+              /* Anonymous: */
+              case 'A': {
+                const char *str = "Anonymous:";
+                while (*str && ch == *str) {
+                  ch = GetChar(&io);
+                  ++str;
+                }
+
+                if (*str == '\0') {
+                  /* Check if there is at least one anonymous page */
+
+                  /* Skip spaces until we reach the page number */
+                  while (ch == ' ')
+                    ch = GetChar(&io);
+
+                  /* Make sure we reached a digit */
+                  if (ch < '0' || ch > '9')
+                    goto read_error;
+
+                  has_anonymous_pages = ch != '0';
+                }
+                break;
+              }
+
+              /* VmFlags: */
+              case 'V': {
+                const char *str = "VmFlags:";
+                while (*str && ch == *str) {
+                  ch = GetChar(&io);
+                  ++str;
+                }
+
+                if (*str == '\0') {
+                  /* Check the flags for "don't dump" (dd) */
+                  while (ch == ' ') {
+                    /* skip space before the flag */
+                    while (ch == ' ')
+                      ch = GetChar(&io);
+
+                    /* check if the flag is "dd" */
+                    if (ch == 'd') {
+                      ch = GetChar(&io);
+                      if (ch == 'd') {
+                        dontdump = true;
+                        break;
+                      }
+                    }
+
+                    /* skip any remaining flag characters */
+                    while (ch >= 'a' && ch <= 'z')
+                      ch = GetChar(&io);
+                  }
+                }
+                break;
+              }
+
+              default:
+                break;
+            }
+
+            /* Skip until end of line                                        */
+            while (ch != '\n') {
+              if (ch < 0)
+                goto read_error;
+
+              ch = GetChar(&io);
+            }
           }
 
           /* Drop the private/shared bit. This makes the flags compatible with
            * the ELF access bits
            */
-          mappings[i].flags    = (mappings[i].flags >> 1) & PF_MASK;
-          if (is_anonymous) {
-            mappings[i].flags |= PF_ANONYMOUS;
-          }
+          mappings[i].flags = (mappings[i].flags >> 1) & PF_MASK;
 
           /* Skip leading zeroed pages (as found in the stack segment)       */
           if ((mappings[i].flags & PF_R) && !is_device) {
@@ -924,14 +958,15 @@ static int CreateElfCore(void *handle,
             mappings[i].start_address += zeros;
           }
 
-          /* Write segment content if one of the following is true:
+          /* Write segment content if the don't dump flag is not set, and one
+           * or more of the following is true:
            *  - the segment is anonymous
            *  - the segment is writable
            *  - the segment has anonymous pages
            */
-          if ((mappings[i].flags & (PF_ANONYMOUS|PF_W)) == 0 && !has_anonymous_pages) {
-            mappings[i].write_size = 0;
-          } else {
+          if (!dontdump && (is_anonymous
+                            || has_anonymous_pages
+                            || (mappings[i].flags & PF_W) != 0)) {
             mappings[i].write_size = mappings[i].end_address
                                    - mappings[i].start_address;
           }
