@@ -46,6 +46,15 @@ AC_COMPILE_IFELSE([AC_LANG_PROGRAM(,)],
                   [AC_MSG_RESULT([no])])
 CFLAGS="$saved_CFLAGS"
 
+# Check if we can prevent strict aliasing: some code in elfcore.c subverts it
+AC_MSG_CHECKING([whether compiler supports -fno-strict-aliasing])
+saved_CFLAGS="$CFLAGS"; CFLAGS="-fno-strict-aliasing $CFLAGS"
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM(,)],
+                  [AC_SUBST(AM_CFLAGS, ["$AM_CFLAGS -fno-strict-aliasing"])
+                   AC_MSG_RESULT([yes])],
+                  [AC_MSG_RESULT([no])])
+CFLAGS="$saved_CFLAGS"
+
 # Write generated configuration file
 AC_CONFIG_FILES([Makefile])
 AC_OUTPUT
