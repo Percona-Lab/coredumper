@@ -19,3 +19,4 @@ SetCoreDumpCompressed
 SetCoreDumpLimited
 SetCoreDumpLimitedByPriority
 SetCoreDumpNotes
+SetCoreDumpCallback

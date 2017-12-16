@@ -291,3 +291,10 @@ int SetCoreDumpNotes(struct CoreDumpParameters *params,
   SetCoreDumpParameter(params, note_count, note_count);
   return 0;
 }
+
+int SetCoreDumpCallback(struct CoreDumpParameters *params,
+                        int (*fn)(void*), void *arg) {
+  SetCoreDumpParameter(params, callback_fn, fn);
+  SetCoreDumpParameter(params, callback_arg, arg);
+  return 0;
+}

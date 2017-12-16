@@ -1673,6 +1673,17 @@ int InternalGetCoreDump(void *frame, int num_threads, pid_t *pids,
   int              pair[2];
   int              main_pid = ((Frame *)frame)->tid;
 
+  const struct CoreDumpParameters *params =
+      va_arg(ap, const struct CoreDumpParameters *);
+
+  int (*callback_fn)(void*) = GetCoreDumpParameter(params, callback_fn);
+  if (callback_fn) {
+    void *arg = GetCoreDumpParameter(params, callback_arg);
+    if (callback_fn(arg) != 0) {
+      goto error;
+    }
+  }
+
   /* Get thread status                                                       */
   memset(puser,          0, sizeof(struct core_user));
   memset(thread_regs,    0, threads * sizeof(struct regs));
@@ -1889,8 +1900,6 @@ int InternalGetCoreDump(void *frame, int num_threads, pid_t *pids,
     int pagesize = sys_sysconf(_SC_PAGESIZE);
     struct kernel_sigset_t old_signals, blocked_signals;
 
-    const struct CoreDumpParameters *params =
-      va_arg(ap, const struct CoreDumpParameters *);
     const char *file_name =
       va_arg(ap, const char *);
     size_t max_length =

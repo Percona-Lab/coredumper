@@ -673,6 +673,16 @@ static int MyWriteCompressedCoreDump(
   return MyWriteCoreDumpWith(&params, file_name);
 }
 
+static int MyCallback(void *arg)
+{
+    int *count = arg;
+    if (*count < 0) {
+        return 1;
+    }
+    ++(*count);
+    return 0;
+}
+
 /* Do not declare this function static, so that the compiler does not get
  * tempted to inline it. We want to be able to see some stack traces.
  */
@@ -827,6 +837,25 @@ void TestCoreDump() {
     CheckWithReadElf(input, output, core_test, "", "cat", "");
     CheckExtraNotesWithReadElf(input, output, core_test);
     assert(!unlink(core_test));
+
+    /* Check callback function handling                                      */
+    puts("Checking callback functions");
+    ClearCoreDumpParameters(&note_params);
+    int count = 0;
+    assert(!SetCoreDumpCallback(&note_params, MyCallback, &count));
+    assert(!SetCoreDumpLimited(&note_params, 0x10000));
+    rc = (loop?MyWriteCoreDumpWith:WriteCoreDumpWith)
+          (&note_params, core_test);
+    assert(!rc);
+    CheckWithReadElf(input, output, core_test, "", "cat", "");
+    assert(count == 1);
+    assert(!unlink(core_test));
+    count = -1;
+    rc = (loop?MyWriteCoreDumpWith:WriteCoreDumpWith)
+          (&note_params, core_test);
+    assert(rc);
+    assert(count == -1);
+    assert(unlink(core_test) == -1 && errno == ENOENT);
 
     /* Create a full-size core file                                          */
     puts("Checking uncompressed core files");

@@ -88,6 +88,10 @@ struct CoreDumpParameters {
   const struct CoredumperNote *notes;
   /* The amount of notes in the notes array.                                 */
   int note_count;
+  /* Callback function */
+  int (*callback_fn)(void*);
+  /* Callback argument */
+  void *callback_arg;
 };
 
 /* The core file is limited in size and max_length denotes the maximum size. If
@@ -246,6 +250,15 @@ int SetCoreDumpLimitedByPriority(struct CoreDumpParameters *params,
  */
 int SetCoreDumpNotes(struct CoreDumpParameters *params,
                      struct CoredumperNote *notes, int note_count);
+
+/* Sets the coredumper parameters to provide a callback function.
+ * The callback will be invoked after all threads have been suspended but
+ * before any coredump operation is invoked.  The callback argument will be
+ * provided.  If the return value is 0 then the coredump will continue; if the
+ * value is something other than 0 then the coredump will not be generated.
+ */
+int SetCoreDumpCallback(struct CoreDumpParameters *params,
+                        int (*fn)(void*), void *arg);
 
 #ifdef __cplusplus
 }
