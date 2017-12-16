@@ -332,6 +332,10 @@ static void CheckExtraNotesWithReadElf(FILE *input, FILE *output,
         /* Get the name, its size and the description size.                  */
         line = SkipLeadingWhiteSpace(line);
         char *name = line;
+        /* Ignore "description data" lines                                   */
+        if (!strncmp(name, "description data:", 17)) {
+          continue;
+        }
         /* Our test names do not include spaces so this will work.           */
         while (!isspace(*line) && *line != '\0') {
           line++;
@@ -568,7 +572,7 @@ static void CheckWithGDB(FILE *input, FILE *output, const char *filename,
       }
       puts("");
     }
-  
+
     assert(*dummy == cmp);
     printf("Magic marker matches %d\n", *dummy);
   }
