@@ -25,8 +25,15 @@ available as a tar source archive, and in prebuilt form as Debian and
 RedHat packages.
 
 For detailed information on how to build and install this library,
-read the "INSTALL" file. On most systems, you will need to configure
-and build by running:
+read the "INSTALL" file.
+
+If you don't have autotools installed, run preconfig to ensure
+timestamps are set properly in your Git repository, to avoid attempts
+to recreate autotools output:
+
+  ./preconfig
+
+Next you will need to configure and build by running:
 
   ./configure && make
 
