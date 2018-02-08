@@ -95,6 +95,17 @@ static struct CoredumperNote extra_notes[] = {
   };
 static const int kExtraNotesCount = 4;
 
+static const char* getReadelf()
+{
+  static const char *readelf = NULL;
+  if (!readelf) {
+    readelf = getenv("READELF");
+    if (!readelf)
+      readelf = "readelf";
+  }
+  return readelf;
+}
+
 /* Make assertion failures print more readable messages                      */
 #undef strcmp
 #undef strncmp
@@ -163,11 +174,12 @@ static void CheckWithReadElf(FILE *input, FILE *output, const char *filename,
   int  rc = fprintf(input,
                     "cat /proc/%d/maps &&"
                     "%s %s <\"%s%s\" >core.%d &&"
-                    "readelf -a core.%d 2>/dev/null; "
+                    "%s -a core.%d 2>/dev/null; "
                     "rm -f core.%d; "
                     "(set +x; echo DONE)\n",
                     getpid(), decompress, args, filename, suffix,
-                    getpid(), getpid(), getpid());
+                    getpid(), getReadelf(),
+                    getpid(), getpid());
   assert(rc > 0);
 
   *buffer = '\000';
@@ -223,7 +235,7 @@ static void CheckPrioritizationWithReadElf(FILE *input, FILE *output,
   char *line;
   char buffer[4096];
   int last_line_was_load;
-  int  rc = fprintf(input, "readelf -a %s; echo DONE\n", filename);
+  int  rc = fprintf(input, "%s -a %s; echo DONE\n", getReadelf(), filename);
   const int kMaxMemorySegments = 256;
   struct MemorySegment memory_segments[kMaxMemorySegments];
   int memory_segment_count = 0;
@@ -301,7 +313,7 @@ static void CheckExtraNotesWithReadElf(FILE *input, FILE *output,
   int offset = 0;
   int note_sizes[kExtraNotesCount];
   int note_sizes_to_description[kExtraNotesCount];
-  int rc = fprintf(input, "readelf -n %s; echo DONE\n", filename);
+  int rc = fprintf(input, "%s -n %s; echo DONE\n", getReadelf(), filename);
 
   assert(rc > 0);
 
