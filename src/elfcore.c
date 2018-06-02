@@ -295,6 +295,17 @@ namespace {
 #define NO_INTR(fn)    do {} while ((fn) < 0 && errno == EINTR)
 #define MY_NO_INTR(fn) do {} while ((fn) < 0 && ERRNO == EINTR)
 
+/* Replacement memcpy.  GCC's __builtin_memcpy causes cores?
+ * Yes I know the return value isn't the same as memcpy().
+ */
+static void my_memcpy(void* dest, const void* src, size_t len)
+{
+    char* d = dest;
+    const char* s = src;
+    size_t i;
+    for (i = 0; i < len; ++i)
+        *(d++) = *(s++);
+}
 
 /* Wrapper for read() which is guaranteed to never return EINTR.
  */
@@ -1709,7 +1720,6 @@ int InternalGetCoreDump(void *frame, int num_threads, pid_t *pids,
       14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
       67, 68, 64, 66, 69, 65, -1 };
     int j;
-    memset(thread_regs + i, 0, sizeof(struct regs));
     for (j = 0; j < sizeof(struct regs)/sizeof(long); j++) {
       if (map[j] >= 0 &&
           sys_ptrace(PTRACE_PEEKUSER, pids[i], (void *)map[j],
@@ -1787,10 +1797,17 @@ int InternalGetCoreDump(void *frame, int num_threads, pid_t *pids,
   /* Get parent's CPU registers, and user data structure                     */
   {
     #ifndef __mips__
-    for (i = 0; i < sizeof(struct core_user)/sizeof(int); i++)
-      sys_ptrace(PTRACE_PEEKUSER, pids[0], (void *)(i*sizeof(int)),
-                 ((char *)&user) + i*sizeof(int));
-    memcpy(&user.regs, thread_regs, sizeof(struct regs));
+    for (i = 0; i < sizeof(struct core_user); i += sizeof(int)) {
+      sys_ptrace(PTRACE_PEEKUSER, pids[0], (void *)i,
+                 ((char *)&user) + i);
+    }
+    /* Avoid using GCC's builtin memcpy... causes crashes in GCC 8.x at -O1?
+     * I could not discover why this is... we are copying from one stack
+     * buffer to another, so it's hard to imagine what could go wrong.
+     * Unfortunately my assembly-fu is not sufficient to figure it out.  */
+
+    /* Overwrite the regs from ptrace with the ones previously computed.  */
+    my_memcpy(&user.regs, thread_regs, sizeof(struct regs));
     #else
     puser = NULL;
     #endif
