@@ -770,7 +770,7 @@ void TestCoreDump() {
   const char *core_test_gz = "core-test.gz";
   for (loop = 0; loop < 2; loop++) {
     /* Prepare to create a core dump for the current process                 */
-    printf("Writing core file to \"%s\"", core_test);
+    printf("loop %d: Writing core file to \"%s\"\n", loop, core_test);
     unlink(core_test);
 
     /* Check whether limits work correctly                                   */
