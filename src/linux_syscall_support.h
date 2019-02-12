@@ -1450,6 +1450,13 @@ struct kernel_statfs {
                              "testq  %5,%5\n"
                              "jz     1f\n"
 
+                             /* Set up alignment of the child stack:
+                              * child_stack &= ~ 0xF;
+                              * The compiler may rely on RSP being aligned to 10h bytes
+                              * before any call to a compiled function.
+                              */
+                             "andb  $-16, %5\n"
+
                              /* childstack -= 2*sizeof(void *);
                               */
                              "subq   $16,%5\n"
@@ -1478,7 +1485,7 @@ struct kernel_statfs {
 
                              /* In the child. Terminate frame pointer chain.
                               */
-                             "xorq   %%rbp,%%rbp\n"
+                             "xorl   %%ebp,%%ebp\n"
 
                              /* Call "fn(arg)".
                               */
