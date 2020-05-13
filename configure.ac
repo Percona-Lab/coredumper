@@ -10,6 +10,7 @@ AC_INIT(coredumper, 1.3.1, opensource@google.com)
 # (for sanity checking)
 AC_CONFIG_SRCDIR(README)
 AM_INIT_AUTOMAKE([subdir-objects])
+LT_INIT
 AM_CONFIG_HEADER(src/config.h)
 
 # Checks for programs.
