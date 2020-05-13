@@ -1455,7 +1455,7 @@ struct kernel_statfs {
                               * The compiler may rely on RSP being aligned to 10h bytes
                               * before any call to a compiled function.
                               */
-                             "andb  $-16, %5\n"
+                             "and  $-16, %5\n"
 
                              /* childstack -= 2*sizeof(void *);
                               */
