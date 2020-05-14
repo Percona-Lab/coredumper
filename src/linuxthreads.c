@@ -38,17 +38,16 @@
 extern "C" {
 #endif
 
+#include <asm/fcntl.h>
+#include <asm/posix_types.h>
 #include <asm/stat.h>
+#include <asm/types.h>
 #include <linux/sched.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
-
-#include <asm/fcntl.h>
-#include <asm/posix_types.h>
-#include <asm/types.h>
 
 #include "linux_syscall_support.h"
 #include "thread_lister.h"
@@ -57,11 +56,9 @@ extern "C" {
 #define CLONE_UNTRACED 0x00800000
 #endif
 
-
 /* Synchronous signals that should not be blocked while in the lister thread.
  */
-static const int sync_signals[]  = { SIGABRT, SIGILL, SIGFPE, SIGSEGV, SIGBUS,
-                                     SIGXCPU, SIGXFSZ };
+static const int sync_signals[] = {SIGABRT, SIGILL, SIGFPE, SIGSEGV, SIGBUS, SIGXCPU, SIGXFSZ};
 
 /* itoa() is not a standard function, and we cannot safely call printf()
  * after suspending threads. So, we just implement our own copy. A
@@ -72,14 +69,12 @@ static char *local_itoa(char *buf, int i) {
     *buf++ = '-';
     return local_itoa(buf, -i);
   } else {
-    if (i >= 10)
-      buf = local_itoa(buf, i/10);
-    *buf++ = (i%10) + '0';
-    *buf   = '\000';
+    if (i >= 10) buf = local_itoa(buf, i / 10);
+    *buf++ = (i % 10) + '0';
+    *buf = '\000';
     return buf;
   }
 }
-
 
 /* Wrapper around clone() that runs "fn" on the same stack as the
  * caller! Unlike fork(), the cloned thread shares the same address space.
@@ -93,12 +88,11 @@ static char *local_itoa(char *buf, int i) {
 /* Try to force this function into a separate stack frame, and make sure
  * that arguments are passed on the stack.
  */
-static int local_clone (int (*fn)(void *), void *arg, ...)
-  __attribute__ ((noinline));
+static int local_clone(int (*fn)(void *), void *arg, ...) __attribute__((noinline));
 #endif
 #endif
 
-static int local_clone (int (*fn)(void *), void *arg, ...) {
+static int local_clone(int (*fn)(void *), void *arg, ...) {
   /* Leave 4kB of gap between the callers stack and the new clone. This
    * should be more than sufficient for the caller to call waitpid() until
    * the cloned thread terminates.
@@ -113,30 +107,26 @@ static int local_clone (int (*fn)(void *), void *arg, ...) {
    * is being debugged. This is OK and the error code will be reported
    * correctly.
    */
-  return sys_clone(fn, (char *)&arg - 4096,
-                   CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_UNTRACED, arg, 0, 0, 0);
+  return sys_clone(fn, (char *)&arg - 4096, CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_UNTRACED, arg, 0, 0, 0);
 }
-
 
 /* Local substitute for the atoi() function, which is not necessarily safe
  * to call once threads are suspended (depending on whether libc looks up
  * locale information,  when executing atoi()).
  */
 static int local_atoi(const char *s) {
-  int n   = 0;
+  int n = 0;
   int neg = *s == '-';
-  if (neg)
-    s++;
-  while (*s >= '0' && *s <= '9')
-    n = 10*n + (*s++ - '0');
+  if (neg) s++;
+  while (*s >= '0' && *s <= '9') n = 10 * n + (*s++ - '0');
   return neg ? -n : n;
 }
 
-
 /* Re-runs fn until it doesn't cause EINTR
  */
-#define NO_INTR(fn)   do {} while ((fn) < 0 && errno == EINTR)
-
+#define NO_INTR(fn) \
+  do {              \
+  } while ((fn) < 0 && errno == EINTR)
 
 /* Wrap a class around system calls, in order to give us access to
  * a private copy of errno. This only works in C++, but it has the
@@ -145,23 +135,22 @@ static int local_atoi(const char *s) {
  */
 #ifdef __cplusplus
 namespace {
-  class SysCalls {
-   public:
-    #define SYS_CPLUSPLUS
-    #define SYS_ERRNO     my_errno
-    #define SYS_INLINE    inline
-    #define SYS_PREFIX    -1
-    #undef  SYS_LINUX_SYSCALL_SUPPORT_H
-    #include "linux_syscall_support.h"
-    SysCalls() : my_errno(0) { }
-    int my_errno;
-  };
-}
+class SysCalls {
+ public:
+#define SYS_CPLUSPLUS
+#define SYS_ERRNO my_errno
+#define SYS_INLINE inline
+#define SYS_PREFIX -1
+#undef SYS_LINUX_SYSCALL_SUPPORT_H
+#include "linux_syscall_support.h"
+  SysCalls() : my_errno(0) {}
+  int my_errno;
+};
+}  // namespace
 #define ERRNO sys.my_errno
 #else
 #define ERRNO my_errno
 #endif
-
 
 /* Wrapper for open() which is guaranteed to never return EINTR.
  */
@@ -170,7 +159,6 @@ static int c_open(const char *fname, int flags, int mode) {
   NO_INTR(rc = sys_open(fname, flags, mode));
   return rc;
 }
-
 
 /* abort() is not safely reentrant, and changes it's behavior each time
  * it is called. This means, if the main application ever called abort()
@@ -193,7 +181,6 @@ static int c_open(const char *fname, int flags, int mode) {
  */
 static volatile int *sig_pids, sig_num_threads, sig_proc, sig_marker;
 
-
 /* Signal handler to help us recover from dying while we are attached to
  * other threads.
  */
@@ -212,16 +199,13 @@ static void SignalHandler(int signum, siginfo_t *si, void *data) {
     }
   }
   sig_pids = NULL;
-  if (sig_marker >= 0)
-    NO_INTR(sys_close(sig_marker));
+  if (sig_marker >= 0) NO_INTR(sys_close(sig_marker));
   sig_marker = -1;
-  if (sig_proc >= 0)
-    NO_INTR(sys_close(sig_proc));
+  if (sig_proc >= 0) NO_INTR(sys_close(sig_proc));
   sig_proc = -1;
 
   sys__exit(signum == SIGABRT ? 1 : 2);
 }
-
 
 /* Try to dirty the stack, and hope that the compiler is not smart enough
  * to optimize this function away. Or worse, the compiler could inline the
@@ -233,30 +217,28 @@ static void DirtyStack(size_t amount) {
   sys_read(-1, buf, amount);
 }
 
-
 /* Data structure for passing arguments to the lister thread.
  */
 #define ALT_STACKSIZE (MINSIGSTKSZ + 4096)
 
 struct ListerParams {
-  int         result, err;
-  char        *altstack_mem;
+  int result, err;
+  char *altstack_mem;
   ListAllProcessThreadsCallBack callback;
-  void        *parameter;
-  va_list     ap;
+  void *parameter;
+  va_list ap;
 };
 
-
 static void ListerThread(struct ListerParams *args) {
-  int                found_parent = 0;
-  pid_t              clone_pid  = sys_gettid(), ppid = sys_getppid();
-  char               proc_self_task[80], marker_name[48], *marker_path;
-  const char         *proc_paths[3];
-  const char *const  *proc_path = proc_paths;
-  int                proc = -1, marker = -1, num_threads = 0;
-  int                max_threads = 0, sig;
+  int found_parent = 0;
+  pid_t clone_pid = sys_gettid(), ppid = sys_getppid();
+  char proc_self_task[80], marker_name[48], *marker_path;
+  const char *proc_paths[3];
+  const char *const *proc_path = proc_paths;
+  int proc = -1, marker = -1, num_threads = 0;
+  int max_threads = 0, sig;
   struct kernel_stat marker_sb, proc_sb;
-  stack_t            altstack;
+  stack_t altstack;
 
   /* Create "marker" that we can use to detect threads sharing the same
    * address space and the same file handles. By setting the FD_CLOEXEC flag
@@ -264,16 +246,13 @@ static void ListerThread(struct ListerParams *args) {
    * and since there is still a race condition,  we will filter those out
    * later, anyway.
    */
-  if ((marker = sys_socket(PF_LOCAL, SOCK_DGRAM, 0)) < 0 ||
-      sys_fcntl(marker, F_SETFD, FD_CLOEXEC) < 0) {
+  if ((marker = sys_socket(PF_LOCAL, SOCK_DGRAM, 0)) < 0 || sys_fcntl(marker, F_SETFD, FD_CLOEXEC) < 0) {
   failure:
     args->result = -1;
-    args->err    = errno;
-    if (marker >= 0)
-      NO_INTR(sys_close(marker));
+    args->err = errno;
+    if (marker >= 0) NO_INTR(sys_close(marker));
     sig_marker = marker = -1;
-    if (proc >= 0)
-      NO_INTR(sys_close(proc));
+    if (proc >= 0) NO_INTR(sys_close(proc));
     sig_proc = proc = -1;
     sys__exit(1);
   }
@@ -297,9 +276,9 @@ static void ListerThread(struct ListerParams *args) {
    * safely execute the signal handler even if we ran out of memory.
    */
   memset(&altstack, 0, sizeof(altstack));
-  altstack.ss_sp    = args->altstack_mem;
+  altstack.ss_sp = args->altstack_mem;
   altstack.ss_flags = 0;
-  altstack.ss_size  = ALT_STACKSIZE;
+  altstack.ss_size = ALT_STACKSIZE;
   sys_sigaltstack(&altstack, (const stack_t *)NULL);
 
   /* Some kernels forget to wake up traced processes, when the
@@ -309,16 +288,16 @@ static void ListerThread(struct ListerParams *args) {
    * interfere with this function.
    */
   sig_marker = marker;
-  sig_proc   = -1;
-  for (sig = 0; sig < sizeof(sync_signals)/sizeof(*sync_signals); sig++) {
+  sig_proc = -1;
+  for (sig = 0; sig < sizeof(sync_signals) / sizeof(*sync_signals); sig++) {
     struct kernel_sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_sigaction_ = SignalHandler;
     sys_sigfillset(&sa.sa_mask);
-    sa.sa_flags      = SA_ONSTACK|SA_SIGINFO|SA_RESETHAND;
+    sa.sa_flags = SA_ONSTACK | SA_SIGINFO | SA_RESETHAND;
     sys_sigaction(sync_signals[sig], &sa, (struct kernel_sigaction *)NULL);
   }
-  
+
   /* Read process directories in /proc/...                                   */
   for (;;) {
     /* Some kernels know about threads, and hide them in "/proc"
@@ -327,14 +306,12 @@ static void ListerThread(struct ListerParams *args) {
      * check there first, and then fall back on the older naming
      * convention if necessary.
      */
-    if ((sig_proc = proc = c_open(*proc_path, O_RDONLY|O_DIRECTORY, 0)) < 0) {
-      if (*++proc_path != NULL)
-        continue;
+    if ((sig_proc = proc = c_open(*proc_path, O_RDONLY | O_DIRECTORY, 0)) < 0) {
+      if (*++proc_path != NULL) continue;
       goto failure;
     }
-    if (sys_fstat(proc, &proc_sb) < 0)
-      goto failure;
-    
+    if (sys_fstat(proc, &proc_sb) < 0) goto failure;
+
     /* Since we are suspending threads, we cannot call any libc
      * functions that might acquire locks. Most notably, we cannot
      * call malloc(). So, we have to allocate memory on the stack,
@@ -346,19 +323,17 @@ static void ListerThread(struct ListerParams *args) {
      * should never need to do so, though, as our guestimate is very
      * conservative.
      */
-    if (max_threads < proc_sb.st_nlink + 100)
-      max_threads = proc_sb.st_nlink + 100;
-    
+    if (max_threads < proc_sb.st_nlink + 100) max_threads = proc_sb.st_nlink + 100;
+
     /* scope */ {
       pid_t pids[max_threads];
-      int   added_entries = 0;
-      sig_num_threads     = num_threads;
-      sig_pids            = pids;
+      int added_entries = 0;
+      sig_num_threads = num_threads;
+      sig_pids = pids;
       for (;;) {
         struct kernel_dirent *entry;
         char buf[4096];
-        ssize_t nbytes = sys_getdents(proc, (struct kernel_dirent *)buf,
-                                      sizeof(buf));
+        ssize_t nbytes = sys_getdents(proc, (struct kernel_dirent *)buf, sizeof(buf));
         if (nbytes < 0)
           goto failure;
         else if (nbytes == 0) {
@@ -374,34 +349,29 @@ static void ListerThread(struct ListerParams *args) {
           }
           break;
         }
-        for (entry = (struct kernel_dirent *)buf;
-             entry < (struct kernel_dirent *)&buf[nbytes];
-             entry = (struct kernel_dirent *)((char *)entry+entry->d_reclen)) {
+        for (entry = (struct kernel_dirent *)buf; entry < (struct kernel_dirent *)&buf[nbytes];
+             entry = (struct kernel_dirent *)((char *)entry + entry->d_reclen)) {
           if (entry->d_ino != 0) {
             const char *ptr = entry->d_name;
             pid_t pid;
-            
+
             /* Some kernels hide threads by preceding the pid with a '.'     */
-            if (*ptr == '.')
-              ptr++;
-            
+            if (*ptr == '.') ptr++;
+
             /* If the directory is not numeric, it cannot be a
              * process/thread
              */
-            if (*ptr < '0' || *ptr > '9')
-              continue;
+            if (*ptr < '0' || *ptr > '9') continue;
             pid = local_atoi(ptr);
 
             /* Attach (and suspend) all threads                              */
             if (pid && pid != clone_pid) {
               struct kernel_stat tmp_sb;
               char fname[entry->d_reclen + 48];
-              strcat(strcat(strcpy(fname, "/proc/"),
-                            entry->d_name), marker_path);
-              
+              strcat(strcat(strcpy(fname, "/proc/"), entry->d_name), marker_path);
+
               /* Check if the marker is identical to the one we created      */
-              if (sys_stat(fname, &tmp_sb) >= 0 &&
-                  marker_sb.st_ino == tmp_sb.st_ino) {
+              if (sys_stat(fname, &tmp_sb) >= 0 && marker_sb.st_ino == tmp_sb.st_ino) {
                 long i, j;
 
                 /* Found one of our threads, make sure it is no duplicate    */
@@ -414,7 +384,7 @@ static void ListerThread(struct ListerParams *args) {
                     goto next_entry;
                   }
                 }
-                
+
                 /* Check whether data structure needs growing                */
                 if (num_threads >= max_threads) {
                   /* Back to square one, this time with more memory          */
@@ -424,9 +394,8 @@ static void ListerThread(struct ListerParams *args) {
 
                 /* Attaching to thread suspends it                           */
                 pids[num_threads++] = pid;
-                sig_num_threads     = num_threads;
-                if (sys_ptrace(PTRACE_ATTACH, pid, (void *)0,
-                               (void *)0) < 0) {
+                sig_num_threads = num_threads;
+                if (sys_ptrace(PTRACE_ATTACH, pid, (void *)0, (void *)0) < 0) {
                   /* If operation failed, ignore thread. Maybe it
                    * just died?  There might also be a race
                    * condition with a concurrent core dumper or
@@ -446,9 +415,9 @@ static void ListerThread(struct ListerParams *args) {
                     goto next_entry;
                   }
                 }
-                
-                if (sys_ptrace(PTRACE_PEEKDATA, pid, &i, &j) || i++ != j ||
-                    sys_ptrace(PTRACE_PEEKDATA, pid, &i, &j) || i   != j) {
+
+                if (sys_ptrace(PTRACE_PEEKDATA, pid, &i, &j) || i++ != j || sys_ptrace(PTRACE_PEEKDATA, pid, &i, &j) ||
+                    i != j) {
                   /* Address spaces are distinct, even though both
                    * processes show the "marker". This is probably
                    * a forked child process rather than a thread.
@@ -489,14 +458,13 @@ static void ListerThread(struct ListerParams *args) {
         /* Now we are ready to call the callback,
          * which takes care of resuming the threads for us.
          */
-        args->result = args->callback(args->parameter, num_threads,
-                                      pids, args->ap);
+        args->result = args->callback(args->parameter, num_threads, pids, args->ap);
         args->err = errno;
 
         /* Callback should have resumed threads, but better safe than sorry  */
         if (ResumeAllProcessThreads(num_threads, pids)) {
           /* Callback forgot to resume at least one thread, report error     */
-          args->err    = EINVAL;
+          args->err = EINVAL;
           args->result = -1;
         }
 
@@ -512,7 +480,6 @@ static void ListerThread(struct ListerParams *args) {
     }
   }
 }
-
 
 /* This function gets the list of all linux threads of the current process
  * passes them to the 'callback' along with the 'parameter' pointer; at the
@@ -533,12 +500,11 @@ static void ListerThread(struct ListerParams *args) {
  * exit() or abort().
  * We return -1 on error and the return value of 'callback' on success.
  */
-int ListAllProcessThreads(void *parameter,
-                          ListAllProcessThreadsCallBack callback, ...) {
-  char                   altstack_mem[ALT_STACKSIZE];
-  struct ListerParams    args;
-  pid_t                  clone_pid;
-  int                    dumpable = 1, sig;
+int ListAllProcessThreads(void *parameter, ListAllProcessThreadsCallBack callback, ...) {
+  char altstack_mem[ALT_STACKSIZE];
+  struct ListerParams args;
+  pid_t clone_pid;
+  int dumpable = 1, sig;
   struct kernel_sigset_t sig_blocked, sig_old;
 
   va_start(args.ap, callback);
@@ -560,20 +526,19 @@ int ListAllProcessThreads(void *parameter,
    * after having called setuid().
    */
   dumpable = sys_prctl(PR_GET_DUMPABLE, 0);
-  if (!dumpable)
-    sys_prctl(PR_SET_DUMPABLE, 1);
+  if (!dumpable) sys_prctl(PR_SET_DUMPABLE, 1);
 
   /* Fill in argument block for dumper thread                                */
-  args.result       = -1;
-  args.err          = 0;
+  args.result = -1;
+  args.err = 0;
   args.altstack_mem = altstack_mem;
-  args.parameter    = parameter;
-  args.callback     = callback;
+  args.parameter = parameter;
+  args.callback = callback;
 
   /* Before cloning the thread lister, block all asynchronous signals, as we */
   /* are not prepared to handle them.                                        */
   sys_sigfillset(&sig_blocked);
-  for (sig = 0; sig < sizeof(sync_signals)/sizeof(*sync_signals); sig++) {
+  for (sig = 0; sig < sizeof(sync_signals) / sizeof(*sync_signals); sig++) {
     sys_sigdelset(&sig_blocked, sync_signals[sig]);
   }
   if (sys_sigprocmask(SIG_BLOCK, &sig_blocked, &sig_old)) {
@@ -583,31 +548,31 @@ int ListAllProcessThreads(void *parameter,
   }
 
   /* scope */ {
-    /* After cloning, both the parent and the child share the same instance
-     * of errno. We must make sure that at least one of these processes
-     * (in our case, the parent) uses modified syscall macros that update
-     * a local copy of errno, instead.
-     */
-    #ifdef __cplusplus
-      #define sys0_sigprocmask sys.sigprocmask
-      #define sys0_waitpid     sys.waitpid
-      SysCalls sys;
-    #else
-      int my_errno;
-      #define SYS_ERRNO        my_errno
-      #define SYS_INLINE       inline
-      #define SYS_PREFIX       0
-      #undef  SYS_LINUX_SYSCALL_SUPPORT_H
-      #include "linux_syscall_support.h"
-    #endif
-  
+/* After cloning, both the parent and the child share the same instance
+ * of errno. We must make sure that at least one of these processes
+ * (in our case, the parent) uses modified syscall macros that update
+ * a local copy of errno, instead.
+ */
+#ifdef __cplusplus
+#define sys0_sigprocmask sys.sigprocmask
+#define sys0_waitpid sys.waitpid
+    SysCalls sys;
+#else
+    int my_errno;
+#define SYS_ERRNO my_errno
+#define SYS_INLINE inline
+#define SYS_PREFIX 0
+#undef SYS_LINUX_SYSCALL_SUPPORT_H
+#include "linux_syscall_support.h"
+#endif
+
     int clone_errno;
     clone_pid = local_clone((int (*)(void *))ListerThread, &args);
     clone_errno = errno;
 
     /* Allow the child to ptrace us, if YAMA ptrace protection is enabled. */
 #ifndef PR_SET_PTRACER
-# define PR_SET_PTRACER 0x59616d61
+#define PR_SET_PTRACER 0x59616d61
 #endif
     sys_prctl(PR_SET_PTRACER, clone_pid);
 
@@ -615,40 +580,42 @@ int ListAllProcessThreads(void *parameter,
 
     if (clone_pid >= 0) {
       int status, rc;
-      while ((rc = sys0_waitpid(clone_pid, &status, __WALL)) < 0 &&
-             ERRNO == EINTR) {
-             /* Keep waiting                                                 */
+      while ((rc = sys0_waitpid(clone_pid, &status, __WALL)) < 0 && ERRNO == EINTR) {
+        /* Keep waiting                                                 */
       }
       if (rc < 0) {
         args.err = ERRNO;
         args.result = -1;
       } else if (WIFEXITED(status)) {
         switch (WEXITSTATUS(status)) {
-          case 0: break;             /* Normal process termination           */
-          case 2: args.err = EFAULT; /* Some fault (e.g. SIGSEGV) detected   */
-                  args.result = -1;
-                  break;
-          case 3: args.err = EPERM;  /* Process is already being traced      */
-                  args.result = -1;
-                  break;
-          default:args.err = ECHILD; /* Child died unexpectedly              */
-                  args.result = -1;
-                  break;
+          case 0:
+            break; /* Normal process termination           */
+          case 2:
+            args.err = EFAULT; /* Some fault (e.g. SIGSEGV) detected   */
+            args.result = -1;
+            break;
+          case 3:
+            args.err = EPERM; /* Process is already being traced      */
+            args.result = -1;
+            break;
+          default:
+            args.err = ECHILD; /* Child died unexpectedly              */
+            args.result = -1;
+            break;
         }
       } else if (!WIFEXITED(status)) {
-        args.err    = EFAULT;        /* Terminated due to an unhandled signal*/
+        args.err = EFAULT; /* Terminated due to an unhandled signal*/
         args.result = -1;
       }
     } else {
       args.result = -1;
-      args.err    = clone_errno;
+      args.err = clone_errno;
     }
   }
 
   /* Restore the "dumpable" state of the process                             */
 failed:
-  if (!dumpable)
-    sys_prctl(PR_SET_DUMPABLE, dumpable);
+  if (!dumpable) sys_prctl(PR_SET_DUMPABLE, dumpable);
 
   va_end(args.ap);
 

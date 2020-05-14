@@ -32,8 +32,11 @@
  */
 
 #define __STDC_LIMIT_MACROS
+#include "google/coredumper.h"
+
 #include <assert.h>
 #include <bits/wordsize.h>
+#include <ctype.h>
 #include <endian.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -41,16 +44,13 @@
 #include <setjmp.h>
 #include <signal.h>
 #include <stdint.h>
-#include <stdlib.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "google/coredumper.h"
 #include "linuxthreads.h"
 
 /* The gdb binary to use on different architectures. Change these if you have
@@ -72,8 +72,7 @@ struct MemorySegment {
  * descending order. If two segments have the same memsz, their filesz values
  * are compared in ascending order.
  */
-static int MemorySegmentCmp(const struct MemorySegment *seg1,
-                            const struct MemorySegment *seg2) {
+static int MemorySegmentCmp(const struct MemorySegment *seg1, const struct MemorySegment *seg2) {
   if (seg1->memsz == seg2->memsz) {
     return seg2->filesz - seg1->filesz;
   }
@@ -85,23 +84,17 @@ unsigned int large_extra_note[256];
 
 /* Extra core notes.                                                         */
 static struct CoredumperNote extra_notes[] = {
-    {"GOOGLE", 0xdeadbeef, 16,
-      (const void *)("abcdefghijklmnop")},
-    {"FOOO", 0xf00ba7, 9,
-      (const void *)("qwertyuio")},
+    {"GOOGLE", 0xdeadbeef, 16, (const void *)("abcdefghijklmnop")},
+    {"FOOO", 0xf00ba7, 9, (const void *)("qwertyuio")},
     {"BAR", 0x0, 0, NULL},
-    {"LARGE", 0x1234, sizeof(large_extra_note),
-      (const void *)(large_extra_note)}
-  };
+    {"LARGE", 0x1234, sizeof(large_extra_note), (const void *)(large_extra_note)}};
 static const int kExtraNotesCount = 4;
 
-static const char* getReadelf()
-{
+static const char *getReadelf() {
   static const char *readelf = NULL;
   if (!readelf) {
     readelf = getenv("READELF");
-    if (!readelf)
-      readelf = "readelf";
+    if (!readelf) readelf = "readelf";
   }
   return readelf;
 }
@@ -113,9 +106,7 @@ static const char* getReadelf()
 
 /* Simple signal handler for dealing with timeouts.                          */
 static jmp_buf jmpenv;
-static void TimeOutHandler(int sig, siginfo_t *info, void *p) {
-  siglongjmp(jmpenv, sig);
-}
+static void TimeOutHandler(int sig, siginfo_t *info, void *p) { siglongjmp(jmpenv, sig); }
 
 /* This is a really silly CPU hog, but we want to avoid creating a
  * core dump while we are executing code in libc. Depending on the
@@ -138,32 +129,39 @@ static void *Busy(void *arg) {
  * entries can be found. We are not checking exact numeric values, as these
  * might differ between runs, and it seems overkill recomputing them here.
  */
-static void CheckWithReadElf(FILE *input, FILE *output, const char *filename,
-                             const char *suffix, const char *decompress,
-                             const char *args) {
-  static const char *msg[] = { " ELF",
+static void CheckWithReadElf(FILE *input, FILE *output, const char *filename, const char *suffix,
+                             const char *decompress, const char *args) {
+  static const char *msg[] = {
+    " ELF",
 #if __BYTE_ORDER == __LITTLE_ENDIAN
-                               "little"
+    "little"
 #else
-                               "big"
+    "big"
 #endif
-                               " endian", "UNIX - System V",
-                               "Core file", "no sections in this file",
-                               "NOTE",
-                               "no relocations in this file",
-                               "The decoding of unwind sections for machine type Advanced Micro Devices X86-64 is not currently supported.",
-                               "No version information found in this file",
-                               "NT_PRPSINFO",
+    " endian",
+    "UNIX - System V",
+    "Core file",
+    "no sections in this file",
+    "NOTE",
+    "no relocations in this file",
+    "The decoding of unwind sections for machine type Advanced Micro Devices X86-64 is not currently supported.",
+    "No version information found in this file",
+    "NT_PRPSINFO",
 #ifndef __mips__
-                               "NT_TASKSTRUCT",
+    "NT_TASKSTRUCT",
 #endif
-                               "NT_PRSTATUS", "NT_FPREGSET",
+    "NT_PRSTATUS",
+    "NT_FPREGSET",
 #ifdef THREADS
-                               "NT_PRSTATUS", "NT_FPREGSET",
-                               "NT_PRSTATUS", "NT_FPREGSET",
+    "NT_PRSTATUS",
+    "NT_FPREGSET",
+    "NT_PRSTATUS",
+    "NT_FPREGSET",
 #endif
-                               "DONE", 0 };
-  const char  **ptr;
+    "DONE",
+    0
+  };
+  const char **ptr;
   char buffer[4096];
   /* Some of the tests explicitly limit core file size, resulting in a
    * truncated core, and causing readelf to print errors on its stderr.
@@ -171,15 +169,13 @@ static void CheckWithReadElf(FILE *input, FILE *output, const char *filename,
    * the test to fail. To prevent this, ignore readelf stderr (using '2>&1'
    * does not suffice when stdout is fully buffered).
    */
-  int  rc = fprintf(input,
-                    "cat /proc/%d/maps &&"
-                    "%s %s <\"%s%s\" >core.%d &&"
-                    "%s -a core.%d 2>/dev/null; "
-                    "rm -f core.%d; "
-                    "(set +x; echo DONE)\n",
-                    getpid(), decompress, args, filename, suffix,
-                    getpid(), getReadelf(),
-                    getpid(), getpid());
+  int rc = fprintf(input,
+                   "cat /proc/%d/maps &&"
+                   "%s %s <\"%s%s\" >core.%d &&"
+                   "%s -a core.%d 2>/dev/null; "
+                   "rm -f core.%d; "
+                   "(set +x; echo DONE)\n",
+                   getpid(), decompress, args, filename, suffix, getpid(), getReadelf(), getpid(), getpid());
   assert(rc > 0);
 
   *buffer = '\000';
@@ -230,12 +226,11 @@ static size_t hextosizet(char *str, char **pos) {
 /* Open a prioritized core file with "readelf", and check that the
  * prioritization was performed correctly.
  */
-static void CheckPrioritizationWithReadElf(FILE *input, FILE *output,
-                                           const char *filename) {
+static void CheckPrioritizationWithReadElf(FILE *input, FILE *output, const char *filename) {
   char *line;
   char buffer[4096];
   int last_line_was_load;
-  int  rc = fprintf(input, "%s -a %s; echo DONE\n", getReadelf(), filename);
+  int rc = fprintf(input, "%s -a %s; echo DONE\n", getReadelf(), filename);
   const int kMaxMemorySegments = 256;
   struct MemorySegment memory_segments[kMaxMemorySegments];
   int memory_segment_count = 0;
@@ -261,10 +256,8 @@ static void CheckPrioritizationWithReadElf(FILE *input, FILE *output,
         last_line_was_load = 0;
         line = SkipLeadingWhiteSpace(line);
         assert(memory_segment_count < kMaxMemorySegments);
-        memory_segments[memory_segment_count].filesz =
-          hextosizet(line, &line);
-        memory_segments[memory_segment_count].memsz =
-          hextosizet(line, &line);
+        memory_segments[memory_segment_count].filesz = hextosizet(line, &line);
+        memory_segments[memory_segment_count].memsz = hextosizet(line, &line);
         line = SkipLeadingWhiteSpace(line);
         /* Line is now at the flags with the second character being 'W' or
          * ' '. We only want to add writable memory segments.
@@ -276,7 +269,7 @@ static void CheckPrioritizationWithReadElf(FILE *input, FILE *output,
     }
   } while (line);
   qsort(memory_segments, sizeof(struct MemorySegment), memory_segment_count,
-        (int (*)(const void*, const void*))MemorySegmentCmp);
+        (int (*)(const void *, const void *))MemorySegmentCmp);
 
   /* Once the memory segments are sorted according to their size in memory, the
    * difference between the memory size and the file size must be decreasing.
@@ -286,8 +279,7 @@ static void CheckPrioritizationWithReadElf(FILE *input, FILE *output,
   size_t last_size_difference = 0;
   int i;
   for (i = 0; i < memory_segment_count; ++i) {
-    size_t current_size_difference =
-      memory_segments[i].memsz - memory_segments[i].filesz;
+    size_t current_size_difference = memory_segments[i].memsz - memory_segments[i].filesz;
     if (i > 0) {
       assert(last_size_difference >= current_size_difference);
     }
@@ -297,12 +289,10 @@ static void CheckPrioritizationWithReadElf(FILE *input, FILE *output,
   return;
 }
 
-
 /* Open a core file which has extra notes with "readelf", and check that the
  * notes were written correctly.
  */
-static void CheckExtraNotesWithReadElf(FILE *input, FILE *output,
-                                       const char *filename) {
+static void CheckExtraNotesWithReadElf(FILE *input, FILE *output, const char *filename) {
   const int kBufferSize = 4096;
   char *line;
   char buffer[kBufferSize];
@@ -406,13 +396,11 @@ static void CheckExtraNotesWithReadElf(FILE *input, FILE *output,
     assert(fread(buffer, 1, note_sizes[i], fp) == note_sizes[i]);
     if (note->description_size > 0) {
       line = &buffer[note_sizes_to_description[i]];
-      assert(!strncmp(line, (const char*)note->description,
-                     note->description_size));
+      assert(!strncmp(line, (const char *)note->description, note->description_size));
     }
   }
 
   assert(!fclose(fp));
-
 
   return;
 }
@@ -423,43 +411,42 @@ static void CheckExtraNotesWithReadElf(FILE *input, FILE *output,
  * We also extract the value of the "dummy" environment variable, and check
  * that it is correct.
  */
-static void CheckWithGDB(FILE *input, FILE *output, const char *filename,
-                         int *dummy, int cmp_parm) {
+static void CheckWithGDB(FILE *input, FILE *output, const char *filename, int *dummy, int cmp_parm) {
   volatile int cmp = cmp_parm;
   char out[4096], buffer[4096];
-  char * volatile out_ptr = out;
+  char *volatile out_ptr = out;
   const char **ptr, *arg = "";
   struct sigaction sa;
 
-#if defined(__i386__) || defined(__x86_64) || defined(__ARM_ARCH_3__) || \
-    defined(__mips__)
-  /* If we have a platform-specific FRAME() macro, we expect the stack trace
-   * to be unrolled all the way to WriteCoreDump().
-   */
-  #define DUMPFUNCTION "CoreDump"
+#if defined(__i386__) || defined(__x86_64) || defined(__ARM_ARCH_3__) || defined(__mips__)
+/* If we have a platform-specific FRAME() macro, we expect the stack trace
+ * to be unrolled all the way to WriteCoreDump().
+ */
+#define DUMPFUNCTION "CoreDump"
 #else
-  /* Otherwise, we the stack trace will start in ListAllProcessThreads.
-   */
-  #define DUMPFUNCTION "ListAllProcessThreads"
+/* Otherwise, we the stack trace will start in ListAllProcessThreads.
+ */
+#define DUMPFUNCTION "ListAllProcessThreads"
 #endif
 
   /* Messages that we are looking for. "@" is a special character that
    * matches a pattern in the output, which can later be used as input
    * to gdb. "*" is a glob wildcard character.
    */
-  static const char *msg[] = { "Core was generated by",
-                               " @ Thread * *"DUMPFUNCTION,
-                               "[Current thread is *",
-                               "#* *CoreDump",
-                               "#@ * TestCoreDump",
-                               " TestCoreDump",
-                               "$1 = ",
+  static const char *msg[] = {"Core was generated by",
+                              " @ Thread * *" DUMPFUNCTION,
+                              "[Current thread is *",
+                              "#* *CoreDump",
+                              "#@ * TestCoreDump",
+                              " TestCoreDump",
+                              "$1 = ",
 #ifdef THREADS
-                               " Busy",
-                               " @ Thread * Busy",
-                               "#*  *CoreDump",
+                              " Busy",
+                              " @ Thread * Busy",
+                              "#*  *CoreDump",
 #endif
-                               "DONE", 0 };
+                              "DONE",
+                              0};
 
   /* Commands that we are sending to gdb. All occurrences of "@" will be
    * substituted with the pattern matching the corresponding "@" character
@@ -480,9 +467,7 @@ static void CheckWithGDB(FILE *input, FILE *output, const char *filename,
           "thread apply all bt 10\n"
 #endif
           "quit\n",
-          GDB,
-          getpid(), filename,
-          (unsigned long)dummy, *dummy, cmp);
+          GDB, getpid(), filename, (unsigned long)dummy, *dummy, cmp);
 
   /* Since we are interactively driving gdb, it is possible that we would
    * indefinitely have to wait for a matching message to appear (this is
@@ -491,7 +476,7 @@ static void CheckWithGDB(FILE *input, FILE *output, const char *filename,
    */
   memset(&sa, 0, sizeof(sa));
   sa.sa_sigaction = TimeOutHandler;
-  sa.sa_flags     = SA_RESTART|SA_SIGINFO;
+  sa.sa_flags = SA_RESTART | SA_SIGINFO;
   sigaction(SIGALRM, &sa, 0);
 
   if (setjmp(jmpenv)) {
@@ -533,7 +518,7 @@ static void CheckWithGDB(FILE *input, FILE *output, const char *filename,
         templ = strcpy(scratch, *ptr);
         for (;;) {
           /* Split the template in substring separated by "@" and "*" chars. */
-          int  l = strcspn(templ, "*@");
+          int l = strcspn(templ, "*@");
           char c = templ[l];
           templ[l] = '\000';
 
@@ -542,14 +527,12 @@ static void CheckWithGDB(FILE *input, FILE *output, const char *filename,
             arg = line;
             isarg = 0;
           }
-          if (c == '@')
-            isarg++;
+          if (c == '@') isarg++;
 
           /* Check if substring of template matches somewhere in current line*/
           if ((line = strstr(line, templ)) != NULL) {
             /* Found a match. Remember arg, if any.                          */
-            if (c != '@')
-              *line = '\000';
+            if (c != '@') *line = '\000';
 
             /* Advance to next pattern that needs matching.                  */
             line += strlen(templ);
@@ -560,8 +543,7 @@ static void CheckWithGDB(FILE *input, FILE *output, const char *filename,
             break;
           }
           /* No more patterns. We have a successful match.                   */
-          if (!c)
-            goto found;
+          if (!c) goto found;
           templ[l] = c;
           templ += l + 1;
         }
@@ -590,23 +572,20 @@ static void CheckWithGDB(FILE *input, FILE *output, const char *filename,
   }
 }
 
-
 /* We can test both the WriteCoreDump() and the GetCoreDump() functions
  * with the same test cases. We just need to wrap the GetCoreDump()
  * family of functions with some code that emulates the WriteCoreDump()
  * functions.
  */
-static int MyWriteCoreDumpWith(const struct CoreDumpParameters *params,
-                               const char *file_name) {
-  int                         rc = 0;
-  int                         coreFd;
-  int                         flags;
-  size_t                      max_length = params->max_length;
+static int MyWriteCoreDumpWith(const struct CoreDumpParameters *params, const char *file_name) {
+  int rc = 0;
+  int coreFd;
+  int flags;
+  size_t max_length = params->max_length;
   struct CoredumperCompressor *comp = NULL;
-  struct CoreDumpParameters   new_params;
+  struct CoreDumpParameters new_params;
 
-  if (!max_length)
-    return 0;
+  if (!max_length) return 0;
   /* Remove limiting parameters.                                             */
   memcpy(&new_params, params, sizeof(struct CoreDumpParameters));
   SetCoreDumpParameter(&new_params, max_length, SIZE_MAX);
@@ -621,21 +600,18 @@ static int MyWriteCoreDumpWith(const struct CoreDumpParameters *params,
     int writeFd;
     const char *suffix = "";
 
-    if (comp != NULL && comp->compressor != NULL && comp->suffix != NULL)
-      suffix = comp->suffix;
+    if (comp != NULL && comp->compressor != NULL && comp->suffix != NULL) suffix = comp->suffix;
 
     /* scope */ {
       char extended_file_name[strlen(file_name) + strlen(suffix) + 1];
       strcat(strcpy(extended_file_name, file_name), suffix);
-      writeFd = open(extended_file_name, O_WRONLY|O_CREAT|O_TRUNC, 0600);
+      writeFd = open(extended_file_name, O_WRONLY | O_CREAT | O_TRUNC, 0600);
     }
     if (writeFd >= 0) {
       char buffer[16384];
       ssize_t len;
       while (max_length > 0 &&
-             ((len = read(coreFd, buffer,
-                          sizeof(buffer) < max_length
-                          ? sizeof(buffer) : max_length)) > 0 ||
+             ((len = read(coreFd, buffer, sizeof(buffer) < max_length ? sizeof(buffer) : max_length)) > 0 ||
               (len < 0 && errno == EINTR))) {
         char *ptr = buffer;
         while (len > 0) {
@@ -645,8 +621,8 @@ static int MyWriteCoreDumpWith(const struct CoreDumpParameters *params,
             rc = -1;
             break;
           }
-          ptr        += i;
-          len        -= i;
+          ptr += i;
+          len -= i;
           max_length -= i;
         }
       }
@@ -674,10 +650,9 @@ static int MyWriteCoreDumpLimited(const char *file_name, size_t max_length) {
   return MyWriteCoreDumpWith(&params, file_name);
 }
 
-static int MyWriteCompressedCoreDump(
-    const char *file_name, size_t max_length,
-    const struct CoredumperCompressor compressors[],
-    struct CoredumperCompressor **selected_compressor){
+static int MyWriteCompressedCoreDump(const char *file_name, size_t max_length,
+                                     const struct CoredumperCompressor compressors[],
+                                     struct CoredumperCompressor **selected_compressor) {
   struct CoreDumpParameters params;
   ClearCoreDumpParameters(&params);
   assert(!SetCoreDumpLimited(&params, max_length));
@@ -685,29 +660,27 @@ static int MyWriteCompressedCoreDump(
   return MyWriteCoreDumpWith(&params, file_name);
 }
 
-static int MyCallback(void *arg)
-{
-    int *count = arg;
-    if (*count < 0) {
-        return 1;
-    }
-    ++(*count);
-    return 0;
+static int MyCallback(void *arg) {
+  int *count = arg;
+  if (*count < 0) {
+    return 1;
+  }
+  ++(*count);
+  return 0;
 }
 
 /* Do not declare this function static, so that the compiler does not get
  * tempted to inline it. We want to be able to see some stack traces.
  */
 void TestCoreDump() {
-  static struct CoredumperCompressor my_compressor[] = {
-  { "/NOSUCHDIR/NOSUCHFILE", 0,    0 },
-  { 0,                       0,    0 }, /* Will be overwritten by test       */
-  { 0,                       0,    0 } };
+  static struct CoredumperCompressor my_compressor[] = {{"/NOSUCHDIR/NOSUCHFILE", 0, 0},
+                                                        {0, 0, 0}, /* Will be overwritten by test       */
+                                                        {0, 0, 0}};
 
-  int         loop, in[2], out[2], dummy, cmp, rc;
-  pid_t       pid;
-  FILE        *input, *output;
-  pthread_t   thread;
+  int loop, in[2], out[2], dummy, cmp, rc;
+  pid_t pid;
+  FILE *input, *output;
+  pthread_t thread;
   struct stat statBuf;
   struct CoredumperCompressor *compressor;
   struct CoreDumpParameters note_params;
@@ -722,17 +695,18 @@ void TestCoreDump() {
    * creating the first thread.
    */
   puts("Forking /bin/bash process");
-  rc = pipe(in);  assert(!rc);
-  rc = pipe(out); assert(!rc);
+  rc = pipe(in);
+  assert(!rc);
+  rc = pipe(out);
+  assert(!rc);
 
   if ((pid = fork()) == 0) {
     int i, openmax;
-    dup2(in[0],  0);
+    dup2(in[0], 0);
     dup2(out[1], 1);
     dup2(out[1], 2);
     openmax = sysconf(_SC_OPEN_MAX);
-    for (i = 3; i < openmax; i++)
-      close(i);
+    for (i = 3; i < openmax; i++) close(i);
     fcntl(0, F_SETFD, 0);
     fcntl(1, F_SETFD, 0);
     fcntl(2, F_SETFD, 0);
@@ -742,7 +716,7 @@ void TestCoreDump() {
   assert(pid >= 0);
   assert(!close(in[0]));
   assert(!close(out[1]));
-  input  = fdopen(in[1], "w");
+  input = fdopen(in[1], "w");
   output = fdopen(out[0], "r");
   setvbuf(input, NULL, _IONBF, 0);
   setvbuf(output, NULL, _IONBF, 0);
@@ -752,7 +726,7 @@ void TestCoreDump() {
    */
   srand(time(0));
   dummy = random();
-  cmp   = ~dummy;
+  cmp = ~dummy;
 
   /* Start some threads that should show up in our core dump; this is
    * complicated by the fact that we do not want our threads to perform any
@@ -763,7 +737,7 @@ void TestCoreDump() {
   pthread_create(&thread, 0, Busy, (void *)&state1);
   pthread_create(&thread, 0, Busy, (void *)&state2);
   while (state1 != RUNNING || state2 != RUNNING) {
-    usleep(100*1000);
+    usleep(100 * 1000);
   }
 
   const char *core_test = "core-test";
@@ -774,12 +748,10 @@ void TestCoreDump() {
     unlink(core_test);
 
     /* Check whether limits work correctly                                   */
-    rc = (loop ? MyWriteCoreDumpLimited : WriteCoreDumpLimited)(
-           core_test, 0);
+    rc = (loop ? MyWriteCoreDumpLimited : WriteCoreDumpLimited)(core_test, 0);
     assert(!rc);
     assert(stat(core_test, &statBuf) < 0);
-    rc = (loop ? MyWriteCoreDumpLimited : WriteCoreDumpLimited)(
-           core_test, 256);
+    rc = (loop ? MyWriteCoreDumpLimited : WriteCoreDumpLimited)(core_test, 256);
     assert(!rc);
     assert(!stat(core_test, &statBuf));
     assert(statBuf.st_size == 256);
@@ -791,15 +763,17 @@ void TestCoreDump() {
       rc = WriteCoreDumpLimitedByPriority(core_test, 0);
       assert(!rc);
       assert(stat(core_test, &statBuf) < 0);
-      puts("Checking priority limited core files of size 256. "
-           "This should truncate the header.");
+      puts(
+          "Checking priority limited core files of size 256. "
+          "This should truncate the header.");
       rc = WriteCoreDumpLimitedByPriority(core_test, 256);
       assert(!rc);
       assert(!stat(core_test, &statBuf));
       assert(statBuf.st_size == 256);
-      puts("Checking priority limited core files of size 60000. "
-           "This will include a couple of complete segments as well as "
-           "an incomplete segment.");
+      puts(
+          "Checking priority limited core files of size 60000. "
+          "This will include a couple of complete segments as well as "
+          "an incomplete segment.");
       rc = WriteCoreDumpLimitedByPriority(core_test, 60000);
       assert(!rc);
       assert(!stat(core_test, &statBuf));
@@ -811,27 +785,23 @@ void TestCoreDump() {
 
     /* Check wether compression works                                        */
     puts("Checking compressed core files");
-    rc = (loop?MyWriteCompressedCoreDump:WriteCompressedCoreDump)
-           (core_test, SIZE_MAX, COREDUMPER_GZIP_COMPRESSED,
-            &compressor);
+    rc = (loop ? MyWriteCompressedCoreDump : WriteCompressedCoreDump)(core_test, SIZE_MAX, COREDUMPER_GZIP_COMPRESSED,
+                                                                      &compressor);
     assert(!rc);
     assert(compressor);
     assert(strstr(compressor->compressor, "gzip"));
     assert(!strcmp(compressor->suffix, ".gz"));
-    CheckWithReadElf(input, output, core_test, compressor->suffix,
-                     compressor->compressor, "-d");
+    CheckWithReadElf(input, output, core_test, compressor->suffix, compressor->compressor, "-d");
     assert(!unlink(core_test_gz));
 
     /* Check wether fallback to uncompressed core files works                */
     puts("Checking fallback to uncompressed core files");
     my_compressor[1].compressor = NULL; /* Disable uncompressed files        */
-    rc = (loop?MyWriteCompressedCoreDump:WriteCompressedCoreDump)
-           (core_test, SIZE_MAX, my_compressor, &compressor);
+    rc = (loop ? MyWriteCompressedCoreDump : WriteCompressedCoreDump)(core_test, SIZE_MAX, my_compressor, &compressor);
     assert(rc);
     assert(!compressor->compressor);
     my_compressor[1].compressor = ""; /* Enable uncompressed files           */
-    rc = (loop?MyWriteCompressedCoreDump:WriteCompressedCoreDump)
-           (core_test, SIZE_MAX, my_compressor, &compressor);
+    rc = (loop ? MyWriteCompressedCoreDump : WriteCompressedCoreDump)(core_test, SIZE_MAX, my_compressor, &compressor);
     assert(!rc);
     assert(compressor->compressor);
     assert(!*compressor->compressor);
@@ -843,8 +813,7 @@ void TestCoreDump() {
     ClearCoreDumpParameters(&note_params);
     assert(!SetCoreDumpNotes(&note_params, extra_notes, kExtraNotesCount));
     assert(!SetCoreDumpLimited(&note_params, 0x10000));
-    rc = (loop?MyWriteCoreDumpWith:WriteCoreDumpWith)
-          (&note_params, core_test);
+    rc = (loop ? MyWriteCoreDumpWith : WriteCoreDumpWith)(&note_params, core_test);
     assert(!rc);
     CheckWithReadElf(input, output, core_test, "", "cat", "");
     CheckExtraNotesWithReadElf(input, output, core_test);
@@ -856,22 +825,20 @@ void TestCoreDump() {
     int count = 0;
     assert(!SetCoreDumpCallback(&note_params, MyCallback, &count));
     assert(!SetCoreDumpLimited(&note_params, 0x10000));
-    rc = (loop?MyWriteCoreDumpWith:WriteCoreDumpWith)
-          (&note_params, core_test);
+    rc = (loop ? MyWriteCoreDumpWith : WriteCoreDumpWith)(&note_params, core_test);
     assert(!rc);
     CheckWithReadElf(input, output, core_test, "", "cat", "");
     assert(count == 1);
     assert(!unlink(core_test));
     count = -1;
-    rc = (loop?MyWriteCoreDumpWith:WriteCoreDumpWith)
-          (&note_params, core_test);
+    rc = (loop ? MyWriteCoreDumpWith : WriteCoreDumpWith)(&note_params, core_test);
     assert(rc);
     assert(count == -1);
     assert(unlink(core_test) == -1 && errno == ENOENT);
 
     /* Create a full-size core file                                          */
     puts("Checking uncompressed core files");
-    rc = (loop?MyWriteCoreDump:WriteCoreDump)(core_test);
+    rc = (loop ? MyWriteCoreDump : WriteCoreDump)(core_test);
     assert(!rc);
     CheckWithReadElf(input, output, core_test, "", "cat", "");
     CheckWithGDB(input, output, core_test, &dummy, cmp);
@@ -893,7 +860,7 @@ void TestCoreDump() {
 }
 
 int main(int argc, char *argv[]) {
-  static int bloat[1024*1024];
+  static int bloat[1024 * 1024];
   int i;
 
   /* This unittest parses the output from "readelf" and "gdb" in order to
@@ -909,7 +876,7 @@ int main(int argc, char *argv[]) {
    * trigger for very small core files. Also, make sure that this data is
    * not easily compressible nor in a read-only memory segment.
    */
-  for (i = 0; i < sizeof(bloat)/sizeof(int); i++) {
+  for (i = 0; i < sizeof(bloat) / sizeof(int); i++) {
     bloat[i] = rand();
   }
 

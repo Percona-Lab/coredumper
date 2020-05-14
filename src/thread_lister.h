@@ -41,10 +41,7 @@
 extern "C" {
 #endif
 
-typedef int (*ListAllProcessThreadsCallBack)(void *parameter,
-                                             int num_threads,
-                                             pid_t *thread_pids,
-                                             va_list ap);
+typedef int (*ListAllProcessThreadsCallBack)(void *parameter, int num_threads, pid_t *thread_pids, va_list ap);
 
 /* This function gets the list of all linux threads of the current process
  * passes them to the 'callback' along with the 'parameter' pointer; at the
@@ -65,8 +62,7 @@ typedef int (*ListAllProcessThreadsCallBack)(void *parameter,
  * exit() or abort().
  * We return -1 on error and the return value of 'callback' on success.
  */
-int ListAllProcessThreads(void *parameter,
-                          ListAllProcessThreadsCallBack callback, ...);
+int ListAllProcessThreads(void *parameter, ListAllProcessThreadsCallBack callback, ...);
 
 /* This function resumes the list of all linux threads that
  * ListAllProcessThreads pauses before giving to its callback.
@@ -79,4 +75,4 @@ int ResumeAllProcessThreads(int num_threads, pid_t *thread_pids);
 }
 #endif
 
-#endif  /* _THREAD_LISTER_H */
+#endif /* _THREAD_LISTER_H */

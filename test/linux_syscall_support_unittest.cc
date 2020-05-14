@@ -39,13 +39,13 @@
 // Used to count the number of check failures
 static int check_failures = 0;
 
-#define CHECK(cond)  do {                       \
-   if (!(cond)) {                               \
-     puts("Check failed: " #cond);              \
-     ++check_failures;                          \
-   }                                            \
-} while (0)
-
+#define CHECK(cond)                 \
+  do {                              \
+    if (!(cond)) {                  \
+      puts("Check failed: " #cond); \
+      ++check_failures;             \
+    }                               \
+  } while (0)
 
 // We need to do some "namespace" magic to be able to include both <asm/stat.h>
 // and <sys/stat.h>, which normally are mutually exclusive.
@@ -90,38 +90,42 @@ static void CheckStructures() {
   // there are a small number of data structures (e.g "struct
   // kernel_old_sigaction") that we cannot test at all, as glibc does
   // not have any definitions for them.
-  CHECK(sizeof(struct iovec)     == sizeof(struct kernel_iovec));
-  CHECK(sizeof(struct msghdr)    == sizeof(struct kernel_msghdr));
-  CHECK(sizeof(struct pollfd)    == sizeof(struct kernel_pollfd));
-  CHECK(sizeof(struct rlimit)    == sizeof(struct kernel_rlimit));
-  CHECK(sizeof(struct rusage)    == sizeof(struct kernel_rusage));
+  CHECK(sizeof(struct iovec) == sizeof(struct kernel_iovec));
+  CHECK(sizeof(struct msghdr) == sizeof(struct kernel_msghdr));
+  CHECK(sizeof(struct pollfd) == sizeof(struct kernel_pollfd));
+  CHECK(sizeof(struct rlimit) == sizeof(struct kernel_rlimit));
+  CHECK(sizeof(struct rusage) == sizeof(struct kernel_rusage));
   CHECK(sizeof(struct sigaction) == sizeof(struct kernel_sigaction)
-  // glibc defines an excessively large sigset_t. Compensate for it:
-         + sizeof(((struct sigaction *)0)->sa_mask) - KERNEL_NSIG/8
-  #ifdef __mips__
-         + 2*sizeof(int)
-  #endif
-  );
-  CHECK(sizeof(struct sockaddr)  == sizeof(struct kernel_sockaddr));
-  CHECK(sizeof(struct stat)      == sizeof(struct kernel_stat));
-  CHECK(sizeof(struct statfs)    == sizeof(struct kernel_statfs)
-#ifdef __USE_FILE_OFFSET64
-  // glibc sometimes defines 64-bit wide fields in "struct statfs"
-  // even though this is just the 32-bit version of the structure.
-  + 5*(sizeof(((struct statfs *)0)->f_blocks) - sizeof(unsigned))
+                                        // glibc defines an excessively large sigset_t. Compensate for it:
+                                        + sizeof(((struct sigaction *)0)->sa_mask) - KERNEL_NSIG / 8
+#ifdef __mips__
+                                        + 2 * sizeof(int)
 #endif
   );
-  CHECK(sizeof(struct timespec)  == sizeof(struct kernel_timespec));
-  #ifndef __x86_64__
-  CHECK(sizeof(struct stat64)    == sizeof(struct kernel_stat64));
-  CHECK(sizeof(struct statfs64)  == sizeof(struct kernel_statfs64));
-  #endif
+  CHECK(sizeof(struct sockaddr) == sizeof(struct kernel_sockaddr));
+  CHECK(sizeof(struct stat) == sizeof(struct kernel_stat));
+  CHECK(sizeof(struct statfs) == sizeof(struct kernel_statfs)
+#ifdef __USE_FILE_OFFSET64
+                                     // glibc sometimes defines 64-bit wide fields in "struct statfs"
+                                     // even though this is just the 32-bit version of the structure.
+                                     + 5 * (sizeof(((struct statfs *)0)->f_blocks) - sizeof(unsigned))
+#endif
+  );
+  CHECK(sizeof(struct timespec) == sizeof(struct kernel_timespec));
+#ifndef __x86_64__
+  CHECK(sizeof(struct stat64) == sizeof(struct kernel_stat64));
+  CHECK(sizeof(struct statfs64) == sizeof(struct kernel_statfs64));
+#endif
 }
 
 #ifdef __mips__
-#define ZERO_SIGACT { 0 }
+#define ZERO_SIGACT \
+  { 0 }
 #else
-#define ZERO_SIGACT { { 0 } }
+#define ZERO_SIGACT \
+  {                 \
+    { 0 }           \
+  }
 #endif
 
 static void SigHandler(int signum) {
@@ -134,31 +138,29 @@ static void SigHandler(int signum) {
   return;
 }
 
-static void SigAction(int signum, siginfo_t *si, void *arg) {
-  SigHandler(signum);
-}
+static void SigAction(int signum, siginfo_t *si, void *arg) { SigHandler(signum); }
 
 static void Sigaction() {
   puts("Sigaction...");
-  int signum       = SIGPWR;
+  int signum = SIGPWR;
   for (int info = 0; info < 2; info++) {
-    signaled         = 0;
+    signaled = 0;
     struct kernel_sigaction sa = ZERO_SIGACT, old, orig;
     CHECK(!sys_sigaction(signum, NULL, &orig));
     if (info) {
       sa.sa_sigaction_ = SigAction;
     } else {
-      sa.sa_handler_   = SigHandler;
+      sa.sa_handler_ = SigHandler;
     }
-    sa.sa_flags      = SA_RESETHAND | SA_RESTART | (info ? SA_SIGINFO : 0);
+    sa.sa_flags = SA_RESETHAND | SA_RESTART | (info ? SA_SIGINFO : 0);
     CHECK(!sys_sigemptyset(&sa.sa_mask));
     CHECK(!sys_sigaction(signum, &sa, &old));
     CHECK(!memcmp(&old, &orig, sizeof(struct kernel_sigaction)));
     CHECK(!sys_sigaction(signum, NULL, &old));
-    #if defined(__i386__) || defined(__x86_64__)
-    old.sa_restorer  = sa.sa_restorer;
-    old.sa_flags    &= ~SA_RESTORER;
-    #endif
+#if defined(__i386__) || defined(__x86_64__)
+    old.sa_restorer = sa.sa_restorer;
+    old.sa_flags &= ~SA_RESTORER;
+#endif
     CHECK(!memcmp(&old, &sa, sizeof(struct kernel_sigaction)));
     struct kernel_sigset_t pending;
     CHECK(!sys_sigpending(&pending));
@@ -181,44 +183,44 @@ static void Sigaction() {
 }
 
 static void OldSigaction() {
-#if defined(__i386__) || defined(__ARM_ARCH_3__) || defined(__PPC__) ||       \
-   (defined(__mips__) && _MIPS_SIM == _MIPS_SIM_ABI32)
+#if defined(__i386__) || defined(__ARM_ARCH_3__) || defined(__PPC__) || \
+    (defined(__mips__) && _MIPS_SIM == _MIPS_SIM_ABI32)
   puts("OldSigaction...");
-  int signum       = SIGPWR;
+  int signum = SIGPWR;
   for (int info = 0; info < 2; info++) {
-    signaled         = 0;
+    signaled = 0;
     struct kernel_old_sigaction sa = ZERO_SIGACT, old, orig;
     CHECK(!sys__sigaction(signum, NULL, &orig));
     if (info) {
       sa.sa_sigaction_ = SigAction;
     } else {
-      sa.sa_handler_   = SigHandler;
+      sa.sa_handler_ = SigHandler;
     }
-    sa.sa_flags      = SA_RESETHAND | SA_RESTART | (info ? SA_SIGINFO : 0);
+    sa.sa_flags = SA_RESETHAND | SA_RESTART | (info ? SA_SIGINFO : 0);
     memset(&sa.sa_mask, 0, sizeof(sa.sa_mask));
     CHECK(!sys__sigaction(signum, &sa, &old));
     CHECK(!memcmp(&old, &orig, sizeof(struct kernel_old_sigaction)));
     CHECK(!sys__sigaction(signum, NULL, &old));
-    #ifndef __mips__
-    old.sa_restorer  = sa.sa_restorer;
-    #endif
+#ifndef __mips__
+    old.sa_restorer = sa.sa_restorer;
+#endif
     CHECK(!memcmp(&old, &sa, sizeof(struct kernel_old_sigaction)));
     unsigned long pending;
     CHECK(!sys__sigpending(&pending));
     CHECK(!(pending & (1UL << (signum - 1))));
     unsigned long mask, oldmask;
-    mask             = 1 << (signum - 1);
+    mask = 1 << (signum - 1);
     CHECK(!sys__sigprocmask(SIG_BLOCK, &mask, &oldmask));
     CHECK(!sys_kill(sys_getpid(), signum));
     CHECK(!sys__sigpending(&pending));
     CHECK(pending & (1UL << (signum - 1)));
     CHECK(!signaled);
-    mask             = ~mask;
+    mask = ~mask;
     CHECK(sys__sigsuspend(
-    #ifndef __PPC__
-                          &mask, 0,
-    #endif
-                          mask) == -1);
+#ifndef __PPC__
+              &mask, 0,
+#endif
+              mask) == -1);
     CHECK(signaled == signum);
     CHECK(!sys__sigaction(signum, &orig, NULL));
     CHECK(!sys__sigprocmask(SIG_SETMASK, &oldmask, NULL));
@@ -226,12 +228,13 @@ static void OldSigaction() {
 #endif
 }
 
-template<class A, class B>static void AlmostEquals(A a, B b) {
+template <class A, class B>
+static void AlmostEquals(A a, B b) {
   double d = 0.0 + a - b;
   if (d < 0) {
     d = -d;
   }
-  double avg = a/2.0 + b/2.0;
+  double avg = a / 2.0 + b / 2.0;
   if (avg < 4096) {
     // Round up to a minimum size. Otherwise, even minute changes could
     // trigger a false positive.
@@ -243,98 +246,97 @@ template<class A, class B>static void AlmostEquals(A a, B b) {
 
 static void StatFs() {
   puts("StatFs...");
-  struct statfs64      libc_statfs;
+  struct statfs64 libc_statfs;
   struct kernel_statfs kernel_statfs;
   CHECK(!statfs64("/", &libc_statfs));
   CHECK(!sys_statfs("/", &kernel_statfs));
-  CHECK(libc_statfs.f_type          == kernel_statfs.f_type);
-  CHECK(libc_statfs.f_bsize         == kernel_statfs.f_bsize);
-  CHECK(libc_statfs.f_blocks        == kernel_statfs.f_blocks);
-  AlmostEquals(libc_statfs.f_bfree,     kernel_statfs.f_bfree);
-  AlmostEquals(libc_statfs.f_bavail,    kernel_statfs.f_bavail);
-  CHECK(libc_statfs.f_files         == kernel_statfs.f_files);
-  AlmostEquals(libc_statfs.f_ffree,     kernel_statfs.f_ffree);
+  CHECK(libc_statfs.f_type == kernel_statfs.f_type);
+  CHECK(libc_statfs.f_bsize == kernel_statfs.f_bsize);
+  CHECK(libc_statfs.f_blocks == kernel_statfs.f_blocks);
+  AlmostEquals(libc_statfs.f_bfree, kernel_statfs.f_bfree);
+  AlmostEquals(libc_statfs.f_bavail, kernel_statfs.f_bavail);
+  CHECK(libc_statfs.f_files == kernel_statfs.f_files);
+  AlmostEquals(libc_statfs.f_ffree, kernel_statfs.f_ffree);
   CHECK(libc_statfs.f_fsid.__val[0] == kernel_statfs.f_fsid.val[0]);
   CHECK(libc_statfs.f_fsid.__val[1] == kernel_statfs.f_fsid.val[1]);
-  CHECK(libc_statfs.f_namelen       == kernel_statfs.f_namelen);
+  CHECK(libc_statfs.f_namelen == kernel_statfs.f_namelen);
 }
 
 static void StatFs64() {
-#if defined(__i386__) || defined(__ARM_ARCH_3__) ||                           \
-   (defined(__mips__) && _MIPS_SIM != _MIPS_SIM_ABI64)
+#if defined(__i386__) || defined(__ARM_ARCH_3__) || (defined(__mips__) && _MIPS_SIM != _MIPS_SIM_ABI64)
   puts("StatFs64...");
-  struct statfs64        libc_statfs;
+  struct statfs64 libc_statfs;
   struct kernel_statfs64 kernel_statfs;
   CHECK(!statfs64("/", &libc_statfs));
   CHECK(!sys_statfs64("/", &kernel_statfs));
-  CHECK(libc_statfs.f_type          == kernel_statfs.f_type);
-  CHECK(libc_statfs.f_bsize         == kernel_statfs.f_bsize);
-  CHECK(libc_statfs.f_blocks        == kernel_statfs.f_blocks);
-  AlmostEquals(libc_statfs.f_bfree,     kernel_statfs.f_bfree);
-  AlmostEquals(libc_statfs.f_bavail,    kernel_statfs.f_bavail);
-  CHECK(libc_statfs.f_files         == kernel_statfs.f_files);
-  AlmostEquals(libc_statfs.f_ffree,     kernel_statfs.f_ffree);
+  CHECK(libc_statfs.f_type == kernel_statfs.f_type);
+  CHECK(libc_statfs.f_bsize == kernel_statfs.f_bsize);
+  CHECK(libc_statfs.f_blocks == kernel_statfs.f_blocks);
+  AlmostEquals(libc_statfs.f_bfree, kernel_statfs.f_bfree);
+  AlmostEquals(libc_statfs.f_bavail, kernel_statfs.f_bavail);
+  CHECK(libc_statfs.f_files == kernel_statfs.f_files);
+  AlmostEquals(libc_statfs.f_ffree, kernel_statfs.f_ffree);
   CHECK(libc_statfs.f_fsid.__val[0] == kernel_statfs.f_fsid.val[0]);
   CHECK(libc_statfs.f_fsid.__val[1] == kernel_statfs.f_fsid.val[1]);
-  CHECK(libc_statfs.f_namelen       == kernel_statfs.f_namelen);
+  CHECK(libc_statfs.f_namelen == kernel_statfs.f_namelen);
 #endif
 }
 
 static void Stat() {
-  static const char * const entries[] = { "/dev/null", "/bin/sh", "/", NULL };
+  static const char *const entries[] = {"/dev/null", "/bin/sh", "/", NULL};
   puts("Stat...");
   for (int i = 0; entries[i]; i++) {
-    struct ::stat64    libc_stat;
+    struct ::stat64 libc_stat;
     struct kernel_stat kernel_stat;
     CHECK(!::stat64(entries[i], &libc_stat));
     CHECK(!sys_stat(entries[i], &kernel_stat));
-//  CHECK(libc_stat.st_dev     == kernel_stat.st_dev);
-    CHECK(libc_stat.st_ino     == kernel_stat.st_ino);
-    CHECK(libc_stat.st_mode    == kernel_stat.st_mode);
-    CHECK(libc_stat.st_nlink   == kernel_stat.st_nlink);
-    CHECK(libc_stat.st_uid     == kernel_stat.st_uid);
-    CHECK(libc_stat.st_gid     == kernel_stat.st_gid);
-    CHECK(libc_stat.st_rdev    == kernel_stat.st_rdev);
-    CHECK(libc_stat.st_size    == kernel_stat.st_size);
-#if !defined(__i386__) && !defined(__ARM_ARCH_3__) && !defined(__PPC__) &&    \
-   !(defined(__mips__) && _MIPS_SIM != _MIPS_SIM_ABI64)
+    //  CHECK(libc_stat.st_dev     == kernel_stat.st_dev);
+    CHECK(libc_stat.st_ino == kernel_stat.st_ino);
+    CHECK(libc_stat.st_mode == kernel_stat.st_mode);
+    CHECK(libc_stat.st_nlink == kernel_stat.st_nlink);
+    CHECK(libc_stat.st_uid == kernel_stat.st_uid);
+    CHECK(libc_stat.st_gid == kernel_stat.st_gid);
+    CHECK(libc_stat.st_rdev == kernel_stat.st_rdev);
+    CHECK(libc_stat.st_size == kernel_stat.st_size);
+#if !defined(__i386__) && !defined(__ARM_ARCH_3__) && !defined(__PPC__) && \
+    !(defined(__mips__) && _MIPS_SIM != _MIPS_SIM_ABI64)
     CHECK(libc_stat.st_blksize == kernel_stat.st_blksize);
-    CHECK(libc_stat.st_blocks  == kernel_stat.st_blocks);
+    CHECK(libc_stat.st_blocks == kernel_stat.st_blocks);
 #endif
-    CHECK(libc_stat.st_atime   == kernel_stat.st_atime_);
-    CHECK(libc_stat.st_mtime   == kernel_stat.st_mtime_);
-    CHECK(libc_stat.st_ctime   == kernel_stat.st_ctime_);
+    CHECK(libc_stat.st_atime == kernel_stat.st_atime_);
+    CHECK(libc_stat.st_mtime == kernel_stat.st_mtime_);
+    CHECK(libc_stat.st_ctime == kernel_stat.st_ctime_);
   }
 }
 
 static void Stat64() {
-#if defined(__i386__) || defined(__ARM_ARCH_3__) || defined(__PPC__) ||       \
-   (defined(__mips__) && _MIPS_SIM != _MIPS_SIM_ABI64)
+#if defined(__i386__) || defined(__ARM_ARCH_3__) || defined(__PPC__) || \
+    (defined(__mips__) && _MIPS_SIM != _MIPS_SIM_ABI64)
   puts("Stat64...");
-  static const char * const entries[] = { "/dev/null", "/bin/sh", "/", NULL };
+  static const char *const entries[] = {"/dev/null", "/bin/sh", "/", NULL};
   for (int i = 0; entries[i]; i++) {
-    struct ::stat64      libc_stat;
+    struct ::stat64 libc_stat;
     struct kernel_stat64 kernel_stat;
     CHECK(!::stat64(entries[i], &libc_stat));
     CHECK(!sys_stat64(entries[i], &kernel_stat));
-    CHECK(libc_stat.st_dev     == kernel_stat.st_dev);
-    CHECK(libc_stat.st_ino     == kernel_stat.st_ino);
-    CHECK(libc_stat.st_mode    == kernel_stat.st_mode);
-    CHECK(libc_stat.st_nlink   == kernel_stat.st_nlink);
-    CHECK(libc_stat.st_uid     == kernel_stat.st_uid);
-    CHECK(libc_stat.st_gid     == kernel_stat.st_gid);
-    CHECK(libc_stat.st_rdev    == kernel_stat.st_rdev);
-    CHECK(libc_stat.st_size    == kernel_stat.st_size);
+    CHECK(libc_stat.st_dev == kernel_stat.st_dev);
+    CHECK(libc_stat.st_ino == kernel_stat.st_ino);
+    CHECK(libc_stat.st_mode == kernel_stat.st_mode);
+    CHECK(libc_stat.st_nlink == kernel_stat.st_nlink);
+    CHECK(libc_stat.st_uid == kernel_stat.st_uid);
+    CHECK(libc_stat.st_gid == kernel_stat.st_gid);
+    CHECK(libc_stat.st_rdev == kernel_stat.st_rdev);
+    CHECK(libc_stat.st_size == kernel_stat.st_size);
     CHECK(libc_stat.st_blksize == kernel_stat.st_blksize);
-    CHECK(libc_stat.st_blocks  == kernel_stat.st_blocks);
-    CHECK(libc_stat.st_atime   == kernel_stat.st_atime_);
-    CHECK(libc_stat.st_mtime   == kernel_stat.st_mtime_);
-    CHECK(libc_stat.st_ctime   == kernel_stat.st_ctime_);
+    CHECK(libc_stat.st_blocks == kernel_stat.st_blocks);
+    CHECK(libc_stat.st_atime == kernel_stat.st_atime_);
+    CHECK(libc_stat.st_mtime == kernel_stat.st_mtime_);
+    CHECK(libc_stat.st_ctime == kernel_stat.st_ctime_);
   }
 #endif
 }
 
-} // namespace
+}  // namespace linux_syscall_support
 
 int main(int argc, char *argv[]) {
   linux_syscall_support::CheckStructures();

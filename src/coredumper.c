@@ -32,6 +32,8 @@
  *
  * Code to extract a core dump snapshot of the current process.
  */
+#include "google/coredumper.h"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -41,87 +43,73 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "google/coredumper.h"
 #include "elfcore.h"
 #include "linux_syscall_support.h"
 #include "linuxthreads.h"
 #include "thread_lister.h"
 
-static const char *const no_args_bzip2[]    = { "bzip2",    NULL };
-static const char *const no_args_gzip[]     = { "gzip",     NULL };
-static const char *const no_args_compress[] = { "compress", NULL };
-const struct CoredumperCompressor COREDUMPER_COMPRESSED[] = {
-  { "/bin/bzip2",        no_args_bzip2,    ".bz2" },
-  { "/usr/bin/bzip2",    no_args_bzip2,    ".bz2" },
-  { "bzip2",             no_args_bzip2,    ".bz2" },
-  { "/bin/gzip",         no_args_gzip,     ".gz"  },
-  { "/usr/bin/gzip",     no_args_gzip,     ".gz"  },
-  { "gzip",              no_args_gzip,     ".gz"  },
-  { "/bin/compress",     no_args_compress, ".Z"   },
-  { "/usr/bin/compress", no_args_compress, ".Z"   },
-  { "compress",          no_args_compress, ".Z"   },
-  { "",                  0,                ""     },
-  { 0,                   0,                0      } };
-const struct CoredumperCompressor COREDUMPER_BZIP2_COMPRESSED[] = {
-  { "/bin/bzip2",        no_args_bzip2,    ".bz2" },
-  { "/usr/bin/bzip2",    no_args_bzip2,    ".bz2" },
-  { "bzip2",             no_args_bzip2,    ".bz2" },
-  { 0,                   0,                0      } };
-const struct CoredumperCompressor COREDUMPER_GZIP_COMPRESSED[] = {
-  { "/bin/gzip",         no_args_gzip,     ".gz"  },
-  { "/usr/bin/gzip",     no_args_gzip,     ".gz"  },
-  { "gzip",              no_args_gzip,     ".gz"  },
-  { 0,                   0,                0      } };
-const struct CoredumperCompressor COREDUMPER_COMPRESS_COMPRESSED[] = {
-  { "/bin/compress",     no_args_compress, ".Z"   },
-  { "/usr/bin/compress", no_args_compress, ".Z"   },
-  { "compress",          no_args_compress, ".Z"   },
-  { 0,                   0,                0      } };
-const struct CoredumperCompressor COREDUMPER_TRY_BZIP2_COMPRESSED[] = {
-  { "/bin/bzip2",        no_args_bzip2,    ".bz2" },
-  { "/usr/bin/bzip2",    no_args_bzip2,    ".bz2" },
-  { "bzip2",             no_args_bzip2,    ".bz2" },
-  { "",                  0,                ""     },
-  { 0,                   0,                0      } };
-const struct CoredumperCompressor COREDUMPER_TRY_GZIP_COMPRESSED[] = {
-  { "/bin/gzip",         no_args_gzip,     ".gz"  },
-  { "/usr/bin/gzip",     no_args_gzip,     ".gz"  },
-  { "gzip",              no_args_gzip,     ".gz"  },
-  { "",                  0,                ""     },
-  { 0,                   0,                0      } };
-const struct CoredumperCompressor COREDUMPER_TRY_COMPRESS_COMPRESSED[] = {
-  { "/bin/compress",     no_args_compress, ".Z"   },
-  { "/usr/bin/compress", no_args_compress, ".Z"   },
-  { "compress",          no_args_compress, ".Z"   },
-  { "",                  0,                ""     },
-  { 0,                   0,                0      } };
-const struct CoredumperCompressor COREDUMPER_UNCOMPRESSED[] = {
-  { "",                  0,                ""     },
-  { 0,                   0,                0      } };
-
+static const char *const no_args_bzip2[] = {"bzip2", NULL};
+static const char *const no_args_gzip[] = {"gzip", NULL};
+static const char *const no_args_compress[] = {"compress", NULL};
+const struct CoredumperCompressor COREDUMPER_COMPRESSED[] = {{"/bin/bzip2", no_args_bzip2, ".bz2"},
+                                                             {"/usr/bin/bzip2", no_args_bzip2, ".bz2"},
+                                                             {"bzip2", no_args_bzip2, ".bz2"},
+                                                             {"/bin/gzip", no_args_gzip, ".gz"},
+                                                             {"/usr/bin/gzip", no_args_gzip, ".gz"},
+                                                             {"gzip", no_args_gzip, ".gz"},
+                                                             {"/bin/compress", no_args_compress, ".Z"},
+                                                             {"/usr/bin/compress", no_args_compress, ".Z"},
+                                                             {"compress", no_args_compress, ".Z"},
+                                                             {"", 0, ""},
+                                                             {0, 0, 0}};
+const struct CoredumperCompressor COREDUMPER_BZIP2_COMPRESSED[] = {{"/bin/bzip2", no_args_bzip2, ".bz2"},
+                                                                   {"/usr/bin/bzip2", no_args_bzip2, ".bz2"},
+                                                                   {"bzip2", no_args_bzip2, ".bz2"},
+                                                                   {0, 0, 0}};
+const struct CoredumperCompressor COREDUMPER_GZIP_COMPRESSED[] = {{"/bin/gzip", no_args_gzip, ".gz"},
+                                                                  {"/usr/bin/gzip", no_args_gzip, ".gz"},
+                                                                  {"gzip", no_args_gzip, ".gz"},
+                                                                  {0, 0, 0}};
+const struct CoredumperCompressor COREDUMPER_COMPRESS_COMPRESSED[] = {{"/bin/compress", no_args_compress, ".Z"},
+                                                                      {"/usr/bin/compress", no_args_compress, ".Z"},
+                                                                      {"compress", no_args_compress, ".Z"},
+                                                                      {0, 0, 0}};
+const struct CoredumperCompressor COREDUMPER_TRY_BZIP2_COMPRESSED[] = {{"/bin/bzip2", no_args_bzip2, ".bz2"},
+                                                                       {"/usr/bin/bzip2", no_args_bzip2, ".bz2"},
+                                                                       {"bzip2", no_args_bzip2, ".bz2"},
+                                                                       {"", 0, ""},
+                                                                       {0, 0, 0}};
+const struct CoredumperCompressor COREDUMPER_TRY_GZIP_COMPRESSED[] = {{"/bin/gzip", no_args_gzip, ".gz"},
+                                                                      {"/usr/bin/gzip", no_args_gzip, ".gz"},
+                                                                      {"gzip", no_args_gzip, ".gz"},
+                                                                      {"", 0, ""},
+                                                                      {0, 0, 0}};
+const struct CoredumperCompressor COREDUMPER_TRY_COMPRESS_COMPRESSED[] = {{"/bin/compress", no_args_compress, ".Z"},
+                                                                          {"/usr/bin/compress", no_args_compress, ".Z"},
+                                                                          {"compress", no_args_compress, ".Z"},
+                                                                          {"", 0, ""},
+                                                                          {0, 0, 0}};
+const struct CoredumperCompressor COREDUMPER_UNCOMPRESSED[] = {{"", 0, ""}, {0, 0, 0}};
 
 #ifndef DUMPER
 /* If the target platform lacks the necessary support for generating core dumps
  * on the fly, or if nobody has ported the code, then return an error.
  */
 typedef void *Frame;
-#define FRAME(f) void *f = &&label; label:
+#define FRAME(f)     \
+  void *f = &&label; \
+  label:
 
-
-int InternalGetCoreDump(void *frame, int num_threads, pid_t *thread_pids,
-                        va_list ap) {
+int InternalGetCoreDump(void *frame, int num_threads, pid_t *thread_pids, va_list ap) {
   errno = EINVAL;
   return -1;
 }
 #endif
 
-
 /* Internal helper method used by GetCoreDump().
  */
-static int GetCoreDumpFunction(void *frame,
-                               const struct CoreDumpParameters *params) {
-  return ListAllProcessThreads(frame, InternalGetCoreDump, params, NULL,
-                               getenv("PATH"));
+static int GetCoreDumpFunction(void *frame, const struct CoreDumpParameters *params) {
+  return ListAllProcessThreads(frame, InternalGetCoreDump, params, NULL, getenv("PATH"));
 }
 
 /* Returns a file handle that can be read to obtain a snapshot of the
@@ -147,8 +135,7 @@ int GetCoreDump(void) {
 
 int GetCoreDumpWith(const struct CoreDumpParameters *params) {
   FRAME(frame);
-  if ((params->flags & COREDUMPER_FLAG_LIMITED) ||
-      (params->flags & COREDUMPER_FLAG_LIMITED_BY_PRIORITY)) {
+  if ((params->flags & COREDUMPER_FLAG_LIMITED) || (params->flags & COREDUMPER_FLAG_LIMITED_BY_PRIORITY)) {
     errno = EINVAL;
     return -1;
   }
@@ -170,16 +157,14 @@ int GetCompressedCoreDump(const struct CoredumperCompressor compressors[],
 
 /* Re-runs fn until it doesn't cause EINTR.
  */
-#define NO_INTR(fn)   do {} while ((fn) < 0 && errno == EINTR)
-
+#define NO_INTR(fn) \
+  do {              \
+  } while ((fn) < 0 && errno == EINTR)
 
 /* Internal helper method used by WriteCoreDump().
  */
-static int WriteCoreDumpFunction(void *frame,
-                                 const struct CoreDumpParameters *params,
-                                 const char *file_name) {
-  return ListAllProcessThreads(frame, InternalGetCoreDump, params, file_name,
-                               getenv("PATH"));
+static int WriteCoreDumpFunction(void *frame, const struct CoreDumpParameters *params, const char *file_name) {
+  return ListAllProcessThreads(frame, InternalGetCoreDump, params, file_name, getenv("PATH"));
 }
 
 /* Writes the core file to disk. This is a convenience method wrapping
@@ -193,8 +178,7 @@ int WriteCoreDump(const char *file_name) {
   return WriteCoreDumpFunction(&frame, &params, file_name);
 }
 
-int WriteCoreDumpWith(const struct CoreDumpParameters *params,
-                      const char *file_name) {
+int WriteCoreDumpWith(const struct CoreDumpParameters *params, const char *file_name) {
   FRAME(frame);
   return WriteCoreDumpFunction(&frame, params, file_name);
 }
@@ -230,9 +214,8 @@ int WriteCoreDumpLimitedByPriority(const char *file_name, size_t max_length) {
  * gzip compression, or ".Z" for compress compression. This behavior can
  * be changed by defining custom CoredumperCompressor descriptions.
  */
-int WriteCompressedCoreDump(const char *file_name, size_t max_length,
-                            const struct CoredumperCompressor compressors[],
-                            struct CoredumperCompressor **selected_compressor){
+int WriteCompressedCoreDump(const char *file_name, size_t max_length, const struct CoredumperCompressor compressors[],
+                            struct CoredumperCompressor **selected_compressor) {
   FRAME(frame);
   struct CoreDumpParameters params;
   ClearCoreDumpParameters(&params);
@@ -241,8 +224,7 @@ int WriteCompressedCoreDump(const char *file_name, size_t max_length,
   return WriteCoreDumpFunction(&frame, &params, file_name);
 }
 
-void ClearCoreDumpParametersInternal(struct CoreDumpParameters *params,
-                                     size_t size) {
+void ClearCoreDumpParametersInternal(struct CoreDumpParameters *params, size_t size) {
   memset(params, 0, size);
   params->size = size;
   SetCoreDumpParameter(params, max_length, SIZE_MAX);
@@ -258,8 +240,7 @@ int SetCoreDumpLimited(struct CoreDumpParameters *params, size_t max_length) {
   return 0;
 }
 
-int SetCoreDumpCompressed(struct CoreDumpParameters *params,
-                          const struct CoredumperCompressor *compressors,
+int SetCoreDumpCompressed(struct CoreDumpParameters *params, const struct CoredumperCompressor *compressors,
                           struct CoredumperCompressor **selected_compressor) {
   if (params->flags & COREDUMPER_FLAG_LIMITED_BY_PRIORITY) {
     errno = EINVAL;
@@ -270,30 +251,24 @@ int SetCoreDumpCompressed(struct CoreDumpParameters *params,
   return 0;
 }
 
-int SetCoreDumpLimitedByPriority(struct CoreDumpParameters *params,
-                                 size_t max_length) {
-  if (((params->flags & COREDUMPER_FLAG_LIMITED) &&
-      !(params->flags & COREDUMPER_FLAG_LIMITED_BY_PRIORITY)) ||
+int SetCoreDumpLimitedByPriority(struct CoreDumpParameters *params, size_t max_length) {
+  if (((params->flags & COREDUMPER_FLAG_LIMITED) && !(params->flags & COREDUMPER_FLAG_LIMITED_BY_PRIORITY)) ||
       params->compressors != NULL) {
     errno = EINVAL;
     return -1;
   }
-  SetCoreDumpParameter(params, flags, params->flags |
-                       COREDUMPER_FLAG_LIMITED |
-                       COREDUMPER_FLAG_LIMITED_BY_PRIORITY);
+  SetCoreDumpParameter(params, flags, params->flags | COREDUMPER_FLAG_LIMITED | COREDUMPER_FLAG_LIMITED_BY_PRIORITY);
   SetCoreDumpParameter(params, max_length, max_length);
   return 0;
 }
 
-int SetCoreDumpNotes(struct CoreDumpParameters *params,
-                     struct CoredumperNote *notes, int note_count) {
+int SetCoreDumpNotes(struct CoreDumpParameters *params, struct CoredumperNote *notes, int note_count) {
   SetCoreDumpParameter(params, notes, notes);
   SetCoreDumpParameter(params, note_count, note_count);
   return 0;
 }
 
-int SetCoreDumpCallback(struct CoreDumpParameters *params,
-                        int (*fn)(void*), void *arg) {
+int SetCoreDumpCallback(struct CoreDumpParameters *params, int (*fn)(void *), void *arg) {
   SetCoreDumpParameter(params, callback_fn, fn);
   SetCoreDumpParameter(params, callback_arg, arg);
   return 0;
