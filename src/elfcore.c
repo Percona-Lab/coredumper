@@ -55,7 +55,7 @@ extern "C" {
 #include <sys/uio.h>
 #include <sys/wait.h>
 
-#include "google/coredumper.h"
+#include "coredumper/coredumper.h"
 #include "linux_syscall_support.h"
 #include "linuxthreads.h"
 #include "thread_lister.h"

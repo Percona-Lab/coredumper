@@ -32,7 +32,7 @@
  *
  * Code to extract a core dump snapshot of the current process.
  */
-#include "google/coredumper.h"
+#include "coredumper/coredumper.h"
 
 #include <errno.h>
 #include <fcntl.h>

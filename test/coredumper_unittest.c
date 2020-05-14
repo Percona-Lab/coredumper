@@ -32,7 +32,7 @@
  */
 
 #define __STDC_LIMIT_MACROS
-#include "google/coredumper.h"
+#include "coredumper/coredumper.h"
 
 #include <assert.h>
 #include <bits/wordsize.h>

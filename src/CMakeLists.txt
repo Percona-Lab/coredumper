@@ -12,7 +12,10 @@ target_include_directories(
   $<BUILD_INTERFACE:${COREDUMPER_SRC_DIR}/include/>
   $<INSTALL_INTERFACE:include>
   )
-set_target_properties(libcoredumper PROPERTIES PUBLIC_HEADER "../include/google/coredumper.h")
+set_target_properties(
+  libcoredumper PROPERTIES PUBLIC_HEADER
+  "../include/coredumper/coredumper.h"
+  )
 
 target_link_libraries(libcoredumper Threads::Threads)
 
@@ -27,6 +30,6 @@ export(TARGETS libcoredumper FILE "libcoredumper.cmake")
 install(
   TARGETS libcoredumper
   EXPORT libcoredumper
-  PUBLIC_HEADER DESTINATION include/google
+  PUBLIC_HEADER DESTINATION include/coredumper
   LIBRARY DESTINATION lib)
 install(EXPORT libcoredumper DESTINATION cmake)
