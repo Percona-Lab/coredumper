@@ -46,7 +46,6 @@ extern "C" {
 #include <stdarg.h>
 #include <stdint.h>
 #include <sys/types.h>
-#include "config.h"
 
 
 /* Define the DUMPER symbol to make sure that there is exactly one
