@@ -1,6 +1,7 @@
 
 add_library(
   coredumper
+  STATIC
   coredumper.c
   thread_lister.c
   elfcore.c
