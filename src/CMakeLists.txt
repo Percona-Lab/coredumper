@@ -18,7 +18,7 @@ set_target_properties(
   "../include/coredumper/coredumper.h"
   )
 
-target_link_libraries(coredumper Threads::Threads)
+target_link_libraries(coredumper ${CMAKE_THREAD_LIBS_INIT})
 
 
 include(CheckCCompilerFlag)
