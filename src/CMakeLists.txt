@@ -31,6 +31,7 @@ export(TARGETS coredumper FILE "coredumper.cmake")
 install(
   TARGETS coredumper
   EXPORT coredumper
+  ARCHIVE DESTINATION lib
   PUBLIC_HEADER DESTINATION include/coredumper
   LIBRARY DESTINATION lib)
 install(EXPORT coredumper DESTINATION cmake)
