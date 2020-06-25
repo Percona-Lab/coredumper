@@ -10,7 +10,7 @@ set(COREDUMPER_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 
 add_subdirectory(src)
 
-include(CTest)
+#include(CTest)
 if(BUILD_TESTING)
   enable_testing()
   add_subdirectory(test)
