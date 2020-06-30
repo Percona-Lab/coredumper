@@ -4,8 +4,8 @@ add_library(
   STATIC
   coredumper.c
   thread_lister.c
-  elfcore.c
-  linuxthreads.c
+  elfcore.cc
+  linuxthreads.cc
   )
 
 target_include_directories(
