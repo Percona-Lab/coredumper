@@ -294,8 +294,8 @@ class SysCalls {
  * Yes I know the return value isn't the same as memcpy().
  */
 static void my_memcpy(void *dest, const void *src, size_t len) {
-  char *d = dest;
-  const char *s = src;
+  char *d = (char *)dest;
+  const char *s = (const char *)src;
   size_t i;
   for (i = 0; i < len; ++i) *(d++) = *(s++);
 }
