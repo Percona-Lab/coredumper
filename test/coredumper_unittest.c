@@ -35,7 +35,9 @@
 #include "coredumper/coredumper.h"
 
 #include <assert.h>
+#if defined(__GLIBC__) || defined(__UCLIBC__)
 #include <bits/wordsize.h>
+#endif
 #include <ctype.h>
 #include <endian.h>
 #include <errno.h>
