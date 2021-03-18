@@ -2553,7 +2553,11 @@ LSS_INLINE int LSS_NAME(sysconf)(int name) {
       return LSS_NAME(getrlimit)(RLIMIT_NOFILE, &limit) < 0 ? 8192 : limit.rlim_cur;
     }
     case _SC_PAGESIZE:
+#if defined(__GLIBC__) || defined(__UCLIBC__)
       return __getpagesize();
+#else
+      return getpagesize();
+#endif
     default:
       errno = ENOSYS;
       return -1;
