@@ -47,7 +47,11 @@ extern "C" {
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__GLIBC__) || defined(__UCLIBC__)
 #include <sys/poll.h>
+#else
+#include <poll.h>
+#endif
 #include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/time.h>
