@@ -101,14 +101,20 @@ extern "C" {
 #include <syscall.h>
 #include <unistd.h>
 
+#if defined(__GLIBC__) || defined(__UCLIBC__)
 #ifdef __mips__
 /* Include definitions of the ABI currently in use.                          */
-#if defined(__GLIBC__) || defined(__UCLIBC__)
 #include <sgidefs.h>
-#else
+#endif
+#else /* defined(__GLIBC__) || defined(__UCLIBC__) */
+#ifdef __mips__
 #include <asm/sgidefs.h>
 #endif
-#endif
+
+#define loff_t off_t
+#define __off64_t off_t
+
+#endif /* defined(__GLIBC__) || defined(__UCLIBC__) */
 
 #endif
 
