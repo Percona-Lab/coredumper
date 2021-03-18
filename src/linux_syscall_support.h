@@ -2236,7 +2236,10 @@ LSS_INLINE int LSS_NAME(sigismember)(struct kernel_sigset_t *set, int signum) {
 #define __NR__sigprocmask __NR_sigprocmask
 #define __NR__sigsuspend __NR_sigsuspend
 #define __NR__socketcall __NR_socketcall
-LSS_INLINE _syscall2(int, fstat64, int, f, struct kernel_stat64 *, b) LSS_INLINE
+#ifndef fstat64
+LSS_INLINE _syscall2(int, fstat64, int, f, struct kernel_stat64 *, b)
+#endif
+    LSS_INLINE
     _syscall5(int, _llseek, uint, fd, ulong, hi, ulong, lo, loff_t *, res, uint, wh) LSS_INLINE
     _syscall1(void *, mmap, void *, a) LSS_INLINE
     _syscall6(void *, mmap2, void *, s, size_t, l, int, p, int, f, int, d, __off64_t, o) LSS_INLINE
@@ -2248,7 +2251,9 @@ LSS_INLINE _syscall2(int, fstat64, int, f, struct kernel_stat64 *, b) LSS_INLINE
 #else
         LSS_INLINE _syscall3(int, _sigsuspend, const void *, a, int, b, unsigned long, s)
 #endif
+#ifndef stat64
             LSS_INLINE _syscall2(int, stat64, const char *, p, struct kernel_stat64 *, b)
+#endif
 
                 LSS_INLINE
     int LSS_NAME(sigaction)(int signum, const struct kernel_sigaction *act, struct kernel_sigaction *oldact) {
