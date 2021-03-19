@@ -146,7 +146,8 @@ static void CheckWithReadElf(FILE *input, FILE *output, const char *filename, co
     "no sections in this file",
     "NOTE",
     "no relocations in this file",
-    "The decoding of unwind sections for machine type Advanced Micro Devices X86-64 is not currently supported.",
+    "The decoding of unwind sections for machine type ",
+    " is not currently supported.",
     "No version information found in this file",
     "NT_PRPSINFO",
 #ifndef __mips__
@@ -182,12 +183,16 @@ static void CheckWithReadElf(FILE *input, FILE *output, const char *filename, co
 
   *buffer = '\000';
   for (ptr = msg; *ptr; ptr++) {
+    int read_next_line = 0;
     do {
       char *line;
       assert(strncmp(buffer, "DONE", 4));
-      line = fgets(buffer, sizeof(buffer), output);
-      assert(line);
-      fputs(buffer, stdout);
+      if (read_next_line) {
+        line = fgets(buffer, sizeof(buffer), output);
+        assert(line);
+        fputs(buffer, stdout);
+      }
+      read_next_line = 1;
     } while (!strstr(buffer, *ptr));
     printf("Found: %s\n", *ptr);
   }
