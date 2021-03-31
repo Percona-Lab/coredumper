@@ -529,8 +529,8 @@ int ListAllProcessThreads(void *parameter, ListAllProcessThreadsCallBack callbac
   /* Make this process "dumpable". This is necessary in order to ptrace()
    * after having called setuid().
    */
-  dumpable = sys_prctl(PR_GET_DUMPABLE, 0);
-  if (!dumpable) sys_prctl(PR_SET_DUMPABLE, 1);
+  dumpable = sys_prctl(PR_GET_DUMPABLE, 0, 0, 0, 0);
+  if (!dumpable) sys_prctl(PR_SET_DUMPABLE, 1, 0, 0, 0);
 
   /* Fill in argument block for dumper thread                                */
   args.result = -1;
@@ -578,7 +578,7 @@ int ListAllProcessThreads(void *parameter, ListAllProcessThreadsCallBack callbac
 #ifndef PR_SET_PTRACER
 #define PR_SET_PTRACER 0x59616d61
 #endif
-    sys_prctl(PR_SET_PTRACER, clone_pid);
+    sys_prctl(PR_SET_PTRACER, clone_pid, 0, 0, 0);
 
     sys_sigprocmask(SIG_SETMASK, &sig_old, &sig_old);
 
@@ -619,7 +619,7 @@ int ListAllProcessThreads(void *parameter, ListAllProcessThreadsCallBack callbac
 
   /* Restore the "dumpable" state of the process                             */
 failed:
-  if (!dumpable) sys_prctl(PR_SET_DUMPABLE, dumpable);
+  if (!dumpable) sys_prctl(PR_SET_DUMPABLE, dumpable, 0, 0, 0);
 
   va_end(args.ap);
 
