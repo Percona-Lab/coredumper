@@ -4050,6 +4050,13 @@ struct kernel_statfs {
                                          struct kernel_sigset_t *oldset) {
       return LSS_NAME(rt_sigprocmask)(how, set, oldset, (KERNEL_NSIG+7)/8);
     }
+    #if defined(__NR_sigprocmask)
+      #define __NR__sigprocmask __NR_sigprocmask
+      LSS_INLINE _syscall3(int, _sigprocmask,
+                           int, h,
+                           const unsigned long *, s,
+                           unsigned long *, o)
+    #endif
   #endif
   #if defined(__NR_rt_sigtimedwait)
     LSS_INLINE int LSS_NAME(sigtimedwait)(const struct kernel_sigset_t *set,
