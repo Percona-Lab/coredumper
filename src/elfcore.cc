@@ -1545,7 +1545,7 @@ static inline int GetParentRegs(void *frame, regs *cpu, fpregs *fp, fpxregs *fpx
   int rc = 0;
   char scratch[4096];
   pid_t pid = getppid();
-  if (sys_ptrace(PTRACE_ATTACH, pid, (void *)0, (void *)0) == 0 && waitpid(pid, (void *)0, __WALL) >= 0) {
+  if (sys_ptrace(PTRACE_ATTACH, pid, (void *)0, (void *)0) == 0 && waitpid(pid, (int *)0, __WALL) >= 0) {
     memset(scratch, 0xFF, sizeof(scratch));
 #if defined(__aarch64__)
     struct iovec iovec;
@@ -1970,7 +1970,7 @@ int InternalGetCoreDump(void *frame, int num_threads, pid_t *pids,
         } else if (rc > 0) {
 #ifndef THREADS
           /* Child will double-fork, so reap the process, now.               */
-          sys_waitpid(rc, (void *)0, __WALL);
+          sys_waitpid(rc, (int *)0, __WALL);
 #endif
         }
 
