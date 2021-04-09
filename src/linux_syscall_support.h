@@ -217,7 +217,7 @@ struct kernel_dirent64 {
 };
 
 /* include/linux/dirent.h                                                    */
-#if !defined(__NR_getdents)
+#if !defined(__NR_getdents) || defined(__aarch64__)
 // when getdents is not available, getdents64 is used for both.
 #define kernel_dirent kernel_dirent64
 #else
@@ -426,6 +426,29 @@ struct kernel_stat64 {
   unsigned int       st_mtime_nsec_;
   int                st_ctime_;
   unsigned int       st_ctime_nsec_;
+  unsigned int       __unused4;
+  unsigned int       __unused5;
+};
+#elif defined(__aarch64__)
+struct kernel_stat64 {
+  unsigned long long st_dev;
+  unsigned long long st_ino;
+  unsigned int       st_mode;
+  unsigned int       st_nlink;
+  unsigned int       st_uid;
+  unsigned int       st_gid;
+  unsigned long long st_rdev;
+  unsigned long long __pad1;
+  long long          st_size;
+  int                st_blksize;
+  int                __pad2;
+  long long          st_blocks;
+  long long          st_atime_;
+  unsigned int       st_atime_nsec;
+  long long          st_mtime_;
+  unsigned int       st_mtime_nsec;
+  long long          st_ctime_;
+  unsigned int       st_ctime_nsec;
   unsigned int       __unused4;
   unsigned int       __unused5;
 };
@@ -1155,6 +1178,9 @@ struct kernel_statfs {
 #ifndef __NR_getdents
 // when getdents is not available, getdents64 is used for both.
 #define __NR_getdents            __NR_getdents64
+#endif
+#ifndef __NR_getpgrp
+#define __NR_getpgrp             65
 #endif
 #ifndef __NR_pread64
 #define __NR_pread64             67
@@ -3986,7 +4012,7 @@ struct kernel_statfs {
                          const char *,            p,
                          struct kernel_stat*,     b, int, f)
   #endif
-  #if defined(__x86_64__) || defined(__s390x__)
+  #if defined(__x86_64__) || defined(__s390x__) || defined(__aarch64__)
     LSS_INLINE int LSS_NAME(getresgid32)(gid_t *rgid,
                                          gid_t *egid,
                                          gid_t *sgid) {
