@@ -40,7 +40,7 @@ extern "C" {
 /* We currently only support x86-32, x86-64, ARM, and MIPS on Linux.
  * Porting to other related platforms should not be difficult.
  */
-#if (defined(__i386__) || defined(__x86_64__) || defined(__ARM_ARCH_3__) || defined(__mips__)) && defined(__linux)
+#if (defined(__i386__) || defined(__x86_64__) || defined(__ARM_ARCH_3__) || defined(__mips__) || defined(__aarch64__)) && defined(__linux)
 
 #include <stdarg.h>
 #include <stdint.h>
@@ -105,6 +105,13 @@ typedef struct mips_regs {
   unsigned long cp0_cause;
   unsigned long unused;
 } mips_regs;
+#elif defined(__aarch64__)
+typedef struct aarch64_regs { /* General purpose registers                 */
+  unsigned long long uregs[31];
+  unsigned long long sp;
+  unsigned long long pc;
+  unsigned long long pstate;
+} aarch64_regs;
 #endif
 
 #if defined(__i386__) && defined(__GNUC__)
@@ -332,6 +339,51 @@ typedef struct Frame {
     (r).lo = (f).mips_regs.lo;                                          \
     (r).cp0_epc = (f).mips_regs.cp0_epc;                                \
   } while (0)
+#elif defined(__aarch64__)
+typedef struct Frame {
+  struct aarch64_regs aarch64_regs;
+  int errno_;
+  pid_t tid;
+} Frame;
+
+#define FRAME(f)                               \
+  Frame f;                                     \
+  uint64_t tmp;                                \
+  do {                                         \
+    f.errno_ = errno;                          \
+    f.tid = sys_gettid();                      \
+      __asm__ __volatile__ (                   \
+              "stp  x0,  x1, [%1, #16 *  0]\n" \
+              "stp  x2,  x3, [%1, #16 *  1]\n" \
+              "stp  x4,  x5, [%1, #16 *  2]\n" \
+              "stp  x6,  x7, [%1, #16 *  3]\n" \
+              "stp  x8,  x9, [%1, #16 *  4]\n" \
+              "stp x10, x11, [%1, #16 *  5]\n" \
+              "stp x12, x13, [%1, #16 *  6]\n" \
+              "stp x14, x15, [%1, #16 *  7]\n" \
+              "stp x16, x17, [%1, #16 *  8]\n" \
+              "stp x18, x19, [%1, #16 *  9]\n" \
+              "stp x20, x21, [%1, #16 * 10]\n" \
+              "stp x22, x23, [%1, #16 * 11]\n" \
+              "stp x24, x25, [%1, #16 * 12]\n" \
+              "stp x26, x27, [%1, #16 * 13]\n" \
+              "stp x28, x29, [%1, #16 * 14]\n" \
+              "mov  %0, sp\n"                  \
+              "stp x30, %0,  [%1, #16 * 15]\n" \
+              "adr  %0, 1f\n"                  \
+              "1:\n"                           \
+              "stp  %0, %0,  [%1, #16 * 16]\n" \
+              : "=&r" (tmp)                    \
+              : "r" (&f.aarch64_regs)          \
+              : "memory");                     \
+  } while (0)
+
+#define SET_FRAME(f, r)        \
+  do {                         \
+      errno = (f).errno_;      \
+      (r) = (f).aarch64_regs;  \
+  } while (0)
+
 #else
 /* If we do not have a hand-optimized assembly version of the FRAME()
  * macro, we cannot reliably unroll the stack. So, we show a few additional

@@ -62,6 +62,9 @@ namespace linux_syscall_support {
 #include <asm/posix_types.h>
 #include <asm/types.h>
 #include <errno.h>
+#if !defined(__GLIBC__) && !defined(__UCLIBC__)
+#include <linux/time.h>
+#endif
 #include <linux/types.h>
 #include <linux/unistd.h>
 #include <signal.h>
