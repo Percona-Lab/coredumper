@@ -982,6 +982,11 @@ static int CreateElfCore(void *handle, ssize_t (*writer)(void *, const void *, s
             for (i = 0; i < vdso.ehdr->e_phnum; i++) {
               if (vdso_phdr[i].p_type == PT_LOAD) {
                 /* This will be written as "normal" mapping                  */
+              } else if (vdso_phdr[i].p_type == PT_NOTE) {
+                /* Skip PT_NOTE segment obtained from vdso.
+                 * There should be just one PT_NOTE instance in a core file.
+                 * As otherwise gdb identify such core file as corrupted.
+                 */
               } else {
                 num_extra_phdrs++;
               }
@@ -1070,7 +1075,7 @@ static int CreateElfCore(void *handle, ssize_t (*writer)(void *, const void *, s
               Phdr *vdso_phdr = (Phdr *)(vdso.address + vdso.ehdr->e_phoff);
               for (i = 0; i < vdso.ehdr->e_phnum; i++) {
                 Phdr *p = vdso_phdr + i;
-                if (p->p_type != PT_LOAD) {
+                if (p->p_type != PT_LOAD && p->p_type != PT_NOTE) {
                   vdso_size += p->p_filesz;
                 }
               }
@@ -1129,7 +1134,7 @@ static int CreateElfCore(void *handle, ssize_t (*writer)(void *, const void *, s
           if (vdso.ehdr) {
             Phdr *vdso_phdr = (Phdr *)(vdso.address + vdso.ehdr->e_phoff);
             for (i = 0; i < vdso.ehdr->e_phnum; i++) {
-              if (vdso_phdr[i].p_type != PT_LOAD) {
+              if (vdso_phdr[i].p_type != PT_LOAD && vdso_phdr[i].p_type != PT_NOTE) {
                 memcpy(&phdr, vdso_phdr + i, sizeof(Phdr));
                 offset += filesz;
                 filesz = phdr.p_filesz;
@@ -1272,6 +1277,8 @@ static int CreateElfCore(void *handle, ssize_t (*writer)(void *, const void *, s
               /* This segment has already been dumped, because it is one of
                * the mappings[].
                */
+            } else if (p->p_type == PT_NOTE) {
+              /* Skip PT_NOTE section obtained from vdso                     */
             } else if (writer(handle, (void *)(p->p_vaddr + vdso.address), p->p_filesz) != p->p_filesz) {
               goto done;
             }
