@@ -707,14 +707,10 @@ static Ehdr *SanitizeVDSO(Ehdr *ehdr, size_t start, size_t end) {
     /* Phdr[] is not "covered" by expected region.                           */
     return NULL;
   }
-  if (phdr[0].p_type != PT_LOAD || phdr[0].p_vaddr != start || phdr[0].p_vaddr + phdr[0].p_memsz >= end) {
-    /* Something goofy.                                                      */
-    return NULL;
-  }
-  for (i = 1; i < ehdr->e_phnum; i++) {
+  int pt_load_hdrs = 0;
+  for (i = 0; i < ehdr->e_phnum; i++) {
     if (phdr[i].p_type == PT_LOAD) {
-      /* Only a single PT_LOAD at index 0 is expected                        */
-      return NULL;
+      pt_load_hdrs++;
     }
     if (phdr[i].p_vaddr & (sizeof(size_t) - 1)) {
       /* Phdr data not properly aligned                                      */
@@ -724,6 +720,10 @@ static Ehdr *SanitizeVDSO(Ehdr *ehdr, size_t start, size_t end) {
       /* The data isn't in the expected range                                */
       return NULL;
     }
+  }
+  if (pt_load_hdrs != 1) {
+    /* There should be one and only one PT_LOAD segment                      */
+    return NULL;
   }
   return ehdr;
 }
