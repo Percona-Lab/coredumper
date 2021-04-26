@@ -712,7 +712,7 @@ static Ehdr *SanitizeVDSO(Ehdr *ehdr, size_t start, size_t end) {
     if (phdr[i].p_type == PT_LOAD) {
       pt_load_hdrs++;
     }
-    if ((start + phdr[i].p_vaddr) & (sizeof(size_t) - 1)) {
+    if ((start + phdr[i].p_vaddr) & (phdr[i].p_align - 1)) {
       /* Phdr data not properly aligned                                      */
       return NULL;
     }
