@@ -712,11 +712,11 @@ static Ehdr *SanitizeVDSO(Ehdr *ehdr, size_t start, size_t end) {
     if (phdr[i].p_type == PT_LOAD) {
       pt_load_hdrs++;
     }
-    if (phdr[i].p_vaddr & (sizeof(size_t) - 1)) {
+    if ((start + phdr[i].p_vaddr) & (sizeof(size_t) - 1)) {
       /* Phdr data not properly aligned                                      */
       return NULL;
     }
-    if (phdr[i].p_vaddr <= start || end <= phdr[i].p_vaddr + phdr[i].p_filesz) {
+    if (start + phdr[i].p_vaddr + phdr[i].p_filesz >= end) {
       /* The data isn't in the expected range                                */
       return NULL;
     }
@@ -1272,7 +1272,7 @@ static int CreateElfCore(void *handle, ssize_t (*writer)(void *, const void *, s
               /* This segment has already been dumped, because it is one of
                * the mappings[].
                */
-            } else if (writer(handle, (void *)p->p_vaddr, p->p_filesz) != p->p_filesz) {
+            } else if (writer(handle, (void *)(p->p_vaddr + vdso.address), p->p_filesz) != p->p_filesz) {
               goto done;
             }
           }
