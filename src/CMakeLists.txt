@@ -20,13 +20,6 @@ set_target_properties(
 
 target_link_libraries(coredumper ${CMAKE_THREAD_LIBS_INIT})
 
-
-include(CheckCCompilerFlag)
-check_c_compiler_flag("-fno-strict-aliasing" FLAG_NO_STRICT_ALIASING)
-if(FLAG_NO_STRICT_ALIASING)
-  target_compile_options(coredumper PUBLIC "-fno-strict-aliasing")
-endif()
-
 export(TARGETS coredumper FILE "coredumper.cmake")
 install(
   TARGETS coredumper
