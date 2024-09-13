@@ -917,9 +917,25 @@ static int CreateElfCore(void *handle, ssize_t (*writer)(void *, const void *, s
            *  - the segment is anonymous
            *  - the segment is writable
            *  - the segment has anonymous pages
+           *  - the segment is file backed (ie not anonymous), readable, is at the
+           *    beginning of the file (ie offset = 0) and starts by the magic ELFMAG
+           *    string --> dump only the very first page of the mapping, hoping that
+           *    there will be an ELF PHDR of the loaded executable/library inside it.
            */
-          if (!dontdump && (is_anonymous || has_anonymous_pages || (mappings[i].flags & PF_W) != 0)) {
-            mappings[i].write_size = mappings[i].end_address - mappings[i].start_address;
+
+          if (!dontdump) {
+              if (is_anonymous || has_anonymous_pages || (mappings[i].flags & PF_W) != 0) {
+                mappings[i].write_size = mappings[i].end_address
+                                       - mappings[i].start_address;
+              } else if (!is_anonymous && mappings[i].offset == 0 && mappings[i].flags & PF_R
+                      // Avoid using memcmp here since we are very low level, do the comparison
+                      // manually.
+                      && ((char*)mappings[i].start_address)[0] == ELFMAG0
+                      && ((char*)mappings[i].start_address)[1] == ELFMAG1
+                      && ((char*)mappings[i].start_address)[2] == ELFMAG2
+                      && ((char*)mappings[i].start_address)[3] == ELFMAG3) {
+                mappings[i].write_size = pagesize;
+              }
           }
 
           /* Remove mapping, if it was not readable, or completely zero
