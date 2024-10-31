@@ -47,7 +47,11 @@ extern "C" {
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__GLIBC__) || defined(__UCLIBC__)
 #include <sys/poll.h>
+#else
+#include <poll.h>
+#endif
 #include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -149,6 +153,15 @@ typedef struct fpregs {
   uint32_t fir;
 } fpregs;
 #define regs mips_regs
+#elif defined(__aarch64__)
+typedef struct fpxregs { /* No extended FPU registers on Aarch64 */
+} fpxregs;
+typedef struct fpregs { /* FPU registers */
+  __uint128_t  vregs[32];
+  unsigned int fpsr;
+  unsigned int fpcr;
+} fpregs;
+#define regs aarch64_regs /* General purpose registers */
 #endif
 
 typedef struct elf_timeval { /* Time value with microsecond resolution    */
@@ -156,11 +169,13 @@ typedef struct elf_timeval { /* Time value with microsecond resolution    */
   long tv_usec;              /* Microseconds                              */
 } elf_timeval;
 
+#if !defined(__aarch64__)
 typedef struct elf_siginfo { /* Information about signal (unused)         */
   int32_t si_signo;          /* Signal number                             */
   int32_t si_code;           /* Extra code                                */
   int32_t si_errno;          /* Errno                                     */
 } elf_siginfo;
+#endif
 
 typedef struct prstatus {   /* Information about thread; includes CPU reg*/
   elf_siginfo pr_info;      /* Info associated with signal               */
@@ -185,7 +200,7 @@ typedef struct prpsinfo { /* Information about process                 */
   unsigned char pr_zomb;  /* Zombie                                    */
   signed char pr_nice;    /* Nice val                                  */
   unsigned long pr_flag;  /* Flags                                     */
-#if defined(__x86_64__) || defined(__mips__)
+#if defined(__x86_64__) || defined(__mips__) || defined(__aarch64__)
   uint32_t pr_uid; /* User ID                                   */
   uint32_t pr_gid; /* Group ID                                  */
 #else
@@ -255,6 +270,8 @@ typedef struct core_user { /* Ptrace returns this data for thread state */
 #define ELF_ARCH EM_ARM
 #elif defined(__mips__)
 #define ELF_ARCH EM_MIPS
+#elif defined(__aarch64__)
+#define ELF_ARCH EM_AARCH64
 #endif
 
 /* Wrap a class around system calls, in order to give us access to
@@ -690,23 +707,23 @@ static Ehdr *SanitizeVDSO(Ehdr *ehdr, size_t start, size_t end) {
     /* Phdr[] is not "covered" by expected region.                           */
     return NULL;
   }
-  if (phdr[0].p_type != PT_LOAD || phdr[0].p_vaddr != start || phdr[0].p_vaddr + phdr[0].p_memsz >= end) {
-    /* Something goofy.                                                      */
-    return NULL;
-  }
-  for (i = 1; i < ehdr->e_phnum; i++) {
+  int pt_load_hdrs = 0;
+  for (i = 0; i < ehdr->e_phnum; i++) {
     if (phdr[i].p_type == PT_LOAD) {
-      /* Only a single PT_LOAD at index 0 is expected                        */
-      return NULL;
+      pt_load_hdrs++;
     }
-    if (phdr[i].p_vaddr & (sizeof(size_t) - 1)) {
+    if ((start + phdr[i].p_vaddr) & (phdr[i].p_align - 1)) {
       /* Phdr data not properly aligned                                      */
       return NULL;
     }
-    if (phdr[i].p_vaddr <= start || end <= phdr[i].p_vaddr + phdr[i].p_filesz) {
+    if (start + phdr[i].p_vaddr + phdr[i].p_filesz >= end) {
       /* The data isn't in the expected range                                */
       return NULL;
     }
+  }
+  if (pt_load_hdrs != 1) {
+    /* There should be one and only one PT_LOAD segment                      */
+    return NULL;
   }
   return ehdr;
 }
@@ -981,6 +998,11 @@ static int CreateElfCore(void *handle, ssize_t (*writer)(void *, const void *, s
             for (i = 0; i < vdso.ehdr->e_phnum; i++) {
               if (vdso_phdr[i].p_type == PT_LOAD) {
                 /* This will be written as "normal" mapping                  */
+              } else if (vdso_phdr[i].p_type == PT_NOTE) {
+                /* Skip PT_NOTE segment obtained from vdso.
+                 * There should be just one PT_NOTE instance in a core file.
+                 * As otherwise gdb identify such core file as corrupted.
+                 */
               } else {
                 num_extra_phdrs++;
               }
@@ -1069,7 +1091,7 @@ static int CreateElfCore(void *handle, ssize_t (*writer)(void *, const void *, s
               Phdr *vdso_phdr = (Phdr *)(vdso.address + vdso.ehdr->e_phoff);
               for (i = 0; i < vdso.ehdr->e_phnum; i++) {
                 Phdr *p = vdso_phdr + i;
-                if (p->p_type != PT_LOAD) {
+                if (p->p_type != PT_LOAD && p->p_type != PT_NOTE) {
                   vdso_size += p->p_filesz;
                 }
               }
@@ -1128,7 +1150,7 @@ static int CreateElfCore(void *handle, ssize_t (*writer)(void *, const void *, s
           if (vdso.ehdr) {
             Phdr *vdso_phdr = (Phdr *)(vdso.address + vdso.ehdr->e_phoff);
             for (i = 0; i < vdso.ehdr->e_phnum; i++) {
-              if (vdso_phdr[i].p_type != PT_LOAD) {
+              if (vdso_phdr[i].p_type != PT_LOAD && vdso_phdr[i].p_type != PT_NOTE) {
                 memcpy(&phdr, vdso_phdr + i, sizeof(Phdr));
                 offset += filesz;
                 filesz = phdr.p_filesz;
@@ -1271,7 +1293,9 @@ static int CreateElfCore(void *handle, ssize_t (*writer)(void *, const void *, s
               /* This segment has already been dumped, because it is one of
                * the mappings[].
                */
-            } else if (writer(handle, (void *)p->p_vaddr, p->p_filesz) != p->p_filesz) {
+            } else if (p->p_type == PT_NOTE) {
+              /* Skip PT_NOTE section obtained from vdso                     */
+            } else if (writer(handle, (void *)(p->p_vaddr + vdso.address), p->p_filesz) != p->p_filesz) {
               goto done;
             }
           }
@@ -1544,13 +1568,25 @@ static inline int GetParentRegs(void *frame, regs *cpu, fpregs *fp, fpxregs *fpx
   int rc = 0;
   char scratch[4096];
   pid_t pid = getppid();
-  if (sys_ptrace(PTRACE_ATTACH, pid, (void *)0, (void *)0) == 0 && waitpid(pid, (void *)0, __WALL) >= 0) {
+  if (sys_ptrace(PTRACE_ATTACH, pid, (void *)0, (void *)0) == 0 && waitpid(pid, (int *)0, __WALL) >= 0) {
     memset(scratch, 0xFF, sizeof(scratch));
+#if defined(__aarch64__)
+    struct iovec iovec;
+    iovec.iov_base = scratch;
+    iovec.iov_len = sizeof(struct regs);
+    if (sys_ptrace(PTRACE_GETREGSET, pid, (void *)NT_PRSTATUS, &iovec) == 0) {
+#else
     if (sys_ptrace(PTRACE_GETREGS, pid, scratch, scratch) == 0) {
+#endif
       memcpy(cpu, scratch, sizeof(struct regs));
       SET_FRAME(*(Frame *)frame, *cpu);
       memset(scratch, 0xFF, sizeof(scratch));
+#if defined(__aarch64__)
+      iovec.iov_len = sizeof(struct fpregs);
+      if (sys_ptrace(PTRACE_GETREGSET, pid, (void *)NT_PRFPREG, &iovec) == 0) {
+#else
       if (sys_ptrace(PTRACE_GETFPREGS, pid, scratch, scratch) == 0) {
+#endif
         memcpy(fp, scratch, sizeof(struct fpregs));
         memset(scratch, 0xFF, sizeof(scratch));
 #if defined(__i386__) && !defined(__x86_64__)
@@ -1680,13 +1716,26 @@ int InternalGetCoreDump(void *frame, int num_threads, pid_t *pids,
     hasSSE = 0;
 #else
     memset(scratch, 0xFF, sizeof(scratch));
+#if defined(__aarch64__)
+    struct iovec iovec;
+    iovec.iov_base = scratch;
+    iovec.iov_len = sizeof(struct regs);
+    if (sys_ptrace(PTRACE_GETREGSET, pids[i], (void *)NT_PRSTATUS, &iovec) == 0) {
+#else
     if (sys_ptrace(PTRACE_GETREGS, pids[i], scratch, scratch) == 0) {
+#endif
       memcpy(thread_regs + i, scratch, sizeof(struct regs));
       if (main_pid == pids[i]) {
         SET_FRAME(*(Frame *)frame, thread_regs[i]);
       }
       memset(scratch, 0xFF, sizeof(scratch));
+#if defined(__aarch64__)
+      iovec.iov_base = scratch;
+      iovec.iov_len = sizeof(struct fpregs);
+      if (sys_ptrace(PTRACE_GETREGSET, pids[i], (void *)NT_PRFPREG, &iovec) == 0) {
+#else
       if (sys_ptrace(PTRACE_GETFPREGS, pids[i], scratch, scratch) == 0) {
+#endif
         memcpy(thread_fpregs + i, scratch, sizeof(struct fpregs));
         memset(scratch, 0xFF, sizeof(scratch));
 #if defined(__i386__) && !defined(__x86_64__)
@@ -1944,7 +1993,7 @@ int InternalGetCoreDump(void *frame, int num_threads, pid_t *pids,
         } else if (rc > 0) {
 #ifndef THREADS
           /* Child will double-fork, so reap the process, now.               */
-          sys_waitpid(rc, (void *)0, __WALL);
+          sys_waitpid(rc, (int *)0, __WALL);
 #endif
         }
 
