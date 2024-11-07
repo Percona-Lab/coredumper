@@ -34,6 +34,7 @@
 #include "thread_lister.h"
 
 #include <stdio.h> /* needed for NULL on some powerpc platforms (?!) */
+#include <unistd.h> /* getpid() */
 #include <sys/prctl.h>
 
 #include "linuxthreads.h"
