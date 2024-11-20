@@ -36,6 +36,7 @@
 #define _COREDUMP_H
 
 #include <stddef.h>
+#include <sys/types.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -105,6 +106,11 @@ struct CoreDumpParameters {
  */
 #define COREDUMPER_FLAG_LIMITED_BY_PRIORITY 2
 
+/* The core file is requested for an external process, By default we try to
+ * collect the core from self.
+ */
+#define COREDUMPER_FLAG_EXTERNAL_PROCESS 4
+
 /* Try compressing with either bzip2, gzip, or compress. If all of those fail,
  * fall back on generating an uncompressed file.
  */
@@ -165,6 +171,14 @@ int GetCompressedCoreDump(const struct CoredumperCompressor compressors[],
  * returned.
  */
 int WriteCoreDump(const char *file_name);
+
+/* Writes the core file of a process with pid to disk. This is a convenience
+ * method wrapping GetCoreDump(). If a core file could not be generated
+ * for any reason, -1 is returned and errno is set appropriately.
+ * On success, zero is returned.
+ */
+int WriteCoreDumpOfPID(struct CoreDumpParameters *params,
+                       const char *file_name, pid_t pid);
 
 /* Writes a core dump to the given file with the given parameters.           */
 int WriteCoreDumpWith(const struct CoreDumpParameters *params, const char *file_name);
