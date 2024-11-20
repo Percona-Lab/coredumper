@@ -32,6 +32,7 @@
  */
 
 #include "elfcore.h"
+#include <stdio.h>
 #if defined DUMPER
 #ifdef __cplusplus
 extern "C" {
@@ -78,6 +79,8 @@ extern "C" {
 #define O_LARGEFILE 00100000 /* generic                                  */
 #endif
 #endif
+
+#define MIN(A, B) ((A < B) ? A : B)
 
 /* Data structures found in x86-32/64, ARM, and MIPS core dumps on Linux;
  * similar data structures are defined in /usr/include/{linux,asm}/... but
@@ -644,11 +647,18 @@ static int WriteThreadRegs(void *handle, ssize_t (*writer)(void *, const void *,
  * to also return the address of VDSO Elf header, if AT_SYSINFO_EHDR
  * is present.
  */
-static void CountAUXV(size_t *pnum_auxv, size_t *pvdso_ehdr) {
+static void CountAUXV(size_t *pnum_auxv, size_t *pvdso_ehdr, pid_t pid, bool ext_process) {
   int fd;
   auxv_t auxv;
   size_t num_auxv = 0, vdso_ehdr = 0;
-  NO_INTR(fd = sys_open("/proc/self/auxv", O_RDONLY, 0));
+  char proc_path[80];
+
+  if (ext_process) {
+    sprintf(proc_path, "/proc/%d/auxv", pid);
+    NO_INTR(fd = sys_open(proc_path, O_RDONLY, 0));
+  } else {
+    NO_INTR(fd = sys_open("/proc/self/auxv", O_RDONLY, 0));
+  }
   if (fd >= 0) {
     ssize_t nread;
     do {
@@ -711,6 +721,108 @@ static Ehdr *SanitizeVDSO(Ehdr *ehdr, size_t start, size_t end) {
   return ehdr;
 }
 
+static int local_atoi(const char *s) {
+  int n = 0;
+  int neg = *s == '-';
+  if (neg) s++;
+  while (*s >= '0' && *s <= '9') n = 10 * n + (*s++ - '0');
+  return neg ? -n : n;
+}
+
+/* This function will update the prinfo of the process based on the key
+ * and value passed.
+ */
+static void UpdatePsInfo(prpsinfo *prinfo, char *key, char *value) {
+  if (strncmp(key, "Uid", 3) == 0) {
+    /* Only Uid and Gid will have 4 fields and separted by tabs */
+    char *split_ptr = strchr(value, '\t');
+    *split_ptr = '\0';
+    prinfo->pr_uid = local_atoi(value);
+  } else if (strncmp(key, "Gid", 3) == 0) {
+    char *split_ptr = strchr(value, '\t');
+    *split_ptr = '\0';
+    prinfo->pr_gid = local_atoi(value);
+  } else if (strncmp(key, "PPid", 4) == 0) {
+    prinfo->pr_ppid = local_atoi(value);
+  } else if (strncmp(key, "NSpgid", 6) == 0) {
+    prinfo->pr_pgrp = local_atoi(value);
+  }
+}
+
+/*
+ * This function reads the /proc/[pid]/status file to find the prinfo structure
+ */
+static void ReadPsStatus(prpsinfo *prinfo, pid_t pid) {
+  struct io io_status;
+  char proc_path[80];
+  char *key_start, *value_start;
+  char *ind;
+
+  prinfo->pr_pid = pid;
+  prinfo->pr_sid = sys_getsid(pid);
+  prinfo->pr_sname = 'R';  // Emulating the process as Running
+
+  io_status.data = io_status.end = 0;
+  sprintf(proc_path, "/proc/%d/status", pid);
+  NO_INTR(io_status.fd = sys_open(proc_path, O_RDONLY, 0));
+  if (io_status.fd >= 0) {
+    if (GetChar(&io_status) > 0) {
+      ind = (char *)io_status.buf;
+      key_start = ind;
+      while (ind < (char *)io_status.end) {
+        if (*ind == ':') {
+          *ind = '\0';
+          value_start = ind + 2; /* To skip the :<tab> */
+        }
+        if (*ind == '\n') {
+          *ind = '\0';
+          UpdatePsInfo(prinfo, key_start, value_start);
+          key_start = ++ind;
+        }
+        ind++;
+      }
+    }
+  }
+}
+
+/*
+ * This function helps to find, if we can access the given
+ * address from a process memory particularly vdso section.
+ */
+static int
+PeekVDSO(void *addr, void *dest, size_t size, pid_t pid)
+{
+  int mem_fd, ret = -1;
+  char proc_path[80];
+  size_t nread = 0;
+
+  sprintf(proc_path, "/proc/%d/mem", pid);
+  mem_fd = sys_open(proc_path, O_RDONLY, 0);
+  if (mem_fd == -1) {
+#ifdef DEBUG
+    fprintf(stderr, "proc mem open failed\n");
+#endif
+    return -1;
+  }
+
+  if (sys_lseek(mem_fd, (size_t)addr, SEEK_SET) < 0) {
+#ifdef DEBUG
+    fprintf(stderr, "VDSO seek failed\n");
+#endif
+    goto done;
+  }
+
+  NO_INTR(nread = sys_read(mem_fd, dest, size));
+  if (nread != size) {
+    goto done;
+  } 
+  ret = 0;
+done:
+  sys_close(mem_fd);
+  
+  return ret;
+}
+
 /* This function is invoked from a separate process. It has access to a
  * copy-on-write copy of the parents address space, and all crucial
  * information about the parent has been computed by the caller.
@@ -718,23 +830,42 @@ static Ehdr *SanitizeVDSO(Ehdr *ehdr, size_t start, size_t end) {
 static int CreateElfCore(void *handle, ssize_t (*writer)(void *, const void *, size_t), int (*is_done)(void *),
                          prpsinfo *prpsinfo, core_user *user, prstatus *prstatus, int num_threads, pid_t *pids,
                          regs *regs, fpregs *fpregs, fpxregs *fpxregs, size_t pagesize, size_t prioritize_max_length,
-                         pid_t main_pid, const struct CoredumperNote *extra_notes, int extra_notes_count) {
+                         pid_t main_pid, const struct CoredumperNote *extra_notes, int extra_notes_count, bool ext_process) {
   /* Count the number of mappings in "/proc/self/maps". We are guaranteed
    * that this number is not going to change while this function executes.
    */
   int rc = -1, num_mappings = 0;
+  int mem_fd = -1;
   struct io io;
+/*
+ * The loopback is used to validate accessiblity of an address, for self process
+ */
   int loopback[2] = {-1, -1};
+  char proc_path[80];
   size_t num_auxv;
   union {
-    Ehdr *ehdr;
+    Ehdr ehdr;
     size_t address;
   } vdso;
 
-  if (sys_pipe(loopback) < 0) goto done;
-
+  if (!ext_process) {
+    if (sys_pipe(loopback) < 0) goto done;
+  }
+  vdso.address = 0;
   io.data = io.end = 0;
-  NO_INTR(io.fd = sys_open("/proc/self/maps", O_RDONLY, 0));
+
+  /*
+   * "/proc/[pid]/maps" should work for both self and external process,
+   * since we don't want any overhead of sprintf in self, we are using
+   * if, else for every proc fs read.
+   */
+  if (ext_process) {
+    sprintf(proc_path, "/proc/%d/maps", main_pid);
+    NO_INTR(io.fd = sys_open(proc_path, O_RDONLY, 0));
+  } else {
+    NO_INTR(io.fd = sys_open("/proc/self/maps", O_RDONLY, 0));
+  }
+
   if (io.fd >= 0) {
     int i, ch;
     while ((ch = GetChar(&io)) >= 0) {
@@ -747,16 +878,36 @@ static int CreateElfCore(void *handle, ssize_t (*writer)(void *, const void *, s
     }
     NO_INTR(sys_close(io.fd));
 
-    CountAUXV(&num_auxv, &vdso.address);
+    CountAUXV(&num_auxv, &vdso.address, main_pid, ext_process);
+    /*
+     * We check if we can read address pointed by vdso here.
+     */
+    if (ext_process && vdso.address) {
+      rc = PeekVDSO((void *)vdso.address, &vdso.ehdr, sizeof(Ehdr), main_pid);
+      if (rc == -1) {
+        vdso.ehdr.e_phnum = 0;
+#ifdef DEBUG
+        fprintf(stderr, "Could not peek to vdso, addr = %p err = %d\n", vdso.address, errno);
+#endif
+        vdso.address = 0;
+      }
+    }
     /* Read all mappings. This requires re-opening "/proc/self/maps"         */
     /* scope */ {
+      Phdr vdso_phdr[vdso.ehdr.e_phnum];
+      Phdr *vdso_phdr_ptr = &vdso_phdr[0];
       static const int PF_MASK = 0x00000007;
       struct {
         size_t start_address, end_address, offset, write_size;
         int flags;
       } mappings[num_mappings];
       io.data = io.end = 0;
-      NO_INTR(io.fd = sys_open("/proc/self/smaps", O_RDONLY, 0));
+      if (ext_process) {
+        sprintf(proc_path, "/proc/%d/smaps", main_pid);
+        NO_INTR(io.fd = sys_open(proc_path, O_RDONLY, 0));
+      } else {
+        NO_INTR(io.fd = sys_open("/proc/self/smaps", O_RDONLY, 0));
+      }
       if (io.fd >= 0) {
         size_t note_align;
         size_t num_extra_phdrs = 0;
@@ -905,11 +1056,13 @@ static int CreateElfCore(void *handle, ssize_t (*writer)(void *, const void *, s
            */
           mappings[i].flags = (mappings[i].flags >> 1) & PF_MASK;
 
-          /* Skip leading zeroed pages (as found in the stack segment)       */
-          if ((mappings[i].flags & PF_R) && !is_device) {
-            zeros = LeadingZeros(loopback, (void *)mappings[i].start_address,
-                                 mappings[i].end_address - mappings[i].start_address, pagesize);
-            mappings[i].start_address += zeros;
+          if (!ext_process) {
+              /* Skip leading zeroed pages (as found in the stack segment)       */
+              if ((mappings[i].flags & PF_R) && !is_device) {
+                zeros = LeadingZeros(loopback, (void *)mappings[i].start_address,
+                                     mappings[i].end_address - mappings[i].start_address, pagesize);
+                mappings[i].start_address += zeros;
+              }
           }
 
           /* Write segment content if the don't dump flag is not set, and one
@@ -927,15 +1080,33 @@ static int CreateElfCore(void *handle, ssize_t (*writer)(void *, const void *, s
               if (is_anonymous || has_anonymous_pages || (mappings[i].flags & PF_W) != 0) {
                 mappings[i].write_size = mappings[i].end_address
                                        - mappings[i].start_address;
-              } else if (!is_anonymous && mappings[i].offset == 0 && mappings[i].flags & PF_R
+              } else if (!is_anonymous && mappings[i].offset == 0 && mappings[i].flags & PF_R) {
+                if (!ext_process 
                       // Avoid using memcmp here since we are very low level, do the comparison
                       // manually.
                       && ((char*)mappings[i].start_address)[0] == ELFMAG0
                       && ((char*)mappings[i].start_address)[1] == ELFMAG1
                       && ((char*)mappings[i].start_address)[2] == ELFMAG2
                       && ((char*)mappings[i].start_address)[3] == ELFMAG3) {
-                mappings[i].write_size = pagesize;
+                   mappings[i].write_size = pagesize;
+                } else if (ext_process) {
+                  /* Do we need to read the mem file in advance for external process here,
+                   * to ensure the non anonymous page has ELFMAG.
+                   * For now we are just dumping it if the other parameter
+                   * confirms it as executable/library
+                   */
+                   mappings[i].write_size = pagesize;
+                }
               }
+          }
+
+          /* We cannot read vsyscall segment from an external process, skip it.
+           * Since the vsyscall segments address is fixed we are comparing against it
+           * Refer https://lwn.net/Articles/446528/
+           */
+          if (ext_process && mappings[i].start_address == 0xffffffffff600000 &&
+                          mappings[i].write_size == 0x1000) {
+            mappings[i].write_size = 0;
           }
 
           /* Remove mapping, if it was not readable, or completely zero
@@ -957,7 +1128,9 @@ static int CreateElfCore(void *handle, ssize_t (*writer)(void *, const void *, s
             size_t start = mappings[i].start_address;
             size_t end = mappings[i].end_address;
             if ((mappings[i].flags & PF_R) && start <= vdso.address && vdso.address < end) {
-              vdso.ehdr = SanitizeVDSO(vdso.ehdr, start, end);
+              if(SanitizeVDSO(&vdso.ehdr, start, end) == NULL) {
+                vdso.address = 0;
+              }
               break;
             }
           }
@@ -972,18 +1145,28 @@ static int CreateElfCore(void *handle, ssize_t (*writer)(void *, const void *, s
         /* Write out the ELF header                                          */
         /* scope */ {
           Ehdr ehdr;
+          int ret = -1;
           if (vdso.address) {
             /* We are going to add Phdrs that "belong" to vdso.
              * This isn't strictly necessary, but matches what kernel code
              * in fs/binfmt_elf.c does on platforms that have vdso.
              */
-            Phdr *vdso_phdr = (Phdr *)(vdso.address + vdso.ehdr->e_phoff);
-            for (i = 0; i < vdso.ehdr->e_phnum; i++) {
-              if (vdso_phdr[i].p_type == PT_LOAD) {
-                /* This will be written as "normal" mapping                  */
-              } else {
-                num_extra_phdrs++;
+            if (ext_process) {
+              ret = PeekVDSO((void *)(vdso.address + vdso.ehdr.e_phoff), (void *)vdso_phdr_ptr, sizeof(Phdr) * vdso.ehdr.e_phnum, main_pid);
+            } else {
+              ret = 0;
+              vdso_phdr_ptr = (Phdr *)(vdso.address + vdso.ehdr.e_phoff);
+            }
+            if (ret == 0) {
+              for (i = 0; i < vdso.ehdr.e_phnum; i++) {
+                if (vdso_phdr_ptr[i].p_type == PT_LOAD) {
+                  /* This will be written as "normal" mapping                  */
+                } else {
+                  num_extra_phdrs++;
+                }
               }
+            } else {
+                vdso.address = 0;
             }
           }
           memset(&ehdr, 0, sizeof(Ehdr));
@@ -1066,8 +1249,7 @@ static int CreateElfCore(void *handle, ssize_t (*writer)(void *, const void *, s
              */
             size_t vdso_size = 0;
             if (vdso.address) {
-              Phdr *vdso_phdr = (Phdr *)(vdso.address + vdso.ehdr->e_phoff);
-              for (i = 0; i < vdso.ehdr->e_phnum; i++) {
+              for (i = 0; i < vdso.ehdr.e_phnum; i++) {
                 Phdr *p = vdso_phdr + i;
                 if (p->p_type != PT_LOAD) {
                   vdso_size += p->p_filesz;
@@ -1125,9 +1307,8 @@ static int CreateElfCore(void *handle, ssize_t (*writer)(void *, const void *, s
               goto done;
             }
           }
-          if (vdso.ehdr) {
-            Phdr *vdso_phdr = (Phdr *)(vdso.address + vdso.ehdr->e_phoff);
-            for (i = 0; i < vdso.ehdr->e_phnum; i++) {
+          if (vdso.address) {
+            for (i = 0; i < vdso.ehdr.e_phnum; i++) {
               if (vdso_phdr[i].p_type != PT_LOAD) {
                 memcpy(&phdr, vdso_phdr + i, sizeof(Phdr));
                 offset += filesz;
@@ -1166,7 +1347,12 @@ static int CreateElfCore(void *handle, ssize_t (*writer)(void *, const void *, s
              * Without this, gdb can't unwind through vdso on i686.
              */
             int fd, i;
-            NO_INTR(fd = sys_open("/proc/self/auxv", O_RDONLY, 0));
+            if (ext_process) {
+              sprintf(proc_path, "/proc/%d/auxv", main_pid);
+              NO_INTR(fd = sys_open(proc_path, O_RDONLY, 0));
+            } else {
+              NO_INTR(fd = sys_open("/proc/self/auxv", O_RDONLY, 0));
+            }
             if (fd == -1) {
               goto done;
             }
@@ -1190,25 +1376,33 @@ static int CreateElfCore(void *handle, ssize_t (*writer)(void *, const void *, s
               }
             }
           }
-          /* The order of threads in the output matters to gdb:
-           * it assumes that the first one is the one that crashed.
-           * Make it easier for the end-user to find crashing thread
-           * by dumping it first.
-           */
-          for (i = num_threads; i-- > 0;) {
-            if (pids[i] == main_pid) {
-              if (WriteThreadRegs(handle, writer, prstatus, pids[i], regs + i, fpregs + i, fpxregs + i)) {
-                goto done;
+          if (!ext_process) {
+              /* The order of threads in the output matters to gdb:
+               * it assumes that the first one is the one that crashed.
+               * Make it easier for the end-user to find crashing thread
+               * by dumping it first.
+               */
+              for (i = num_threads; i-- > 0;) {
+                if (pids[i] == main_pid) {
+                  if (WriteThreadRegs(handle, writer, prstatus, pids[i], regs + i, fpregs + i, fpxregs + i)) {
+                    goto done;
+                  }
+                  break;
+                }
               }
-              break;
-            }
-          }
-          for (i = num_threads; i-- > 0;) {
-            if (pids[i] != main_pid) {
-              if (WriteThreadRegs(handle, writer, prstatus, pids[i], regs + i, fpregs + i, fpxregs + i)) {
-                goto done;
+              for (i = num_threads; i-- > 0;) {
+                if (pids[i] != main_pid) {
+                  if (WriteThreadRegs(handle, writer, prstatus, pids[i], regs + i, fpregs + i, fpxregs + i)) {
+                    goto done;
+                  }
+                }
               }
-            }
+          } else {
+              for (i = num_threads; i-- > 0;) {
+                  if (WriteThreadRegs(handle, writer, prstatus, pids[i], regs + i, fpregs + i, fpxregs + i)) {
+                    goto done;
+                  }
+              }
           }
 
           /* Write user provided notes                                       */
@@ -1255,24 +1449,79 @@ static int CreateElfCore(void *handle, ssize_t (*writer)(void *, const void *, s
           }
         }
 
-        /* Write all memory segments                                         */
-        for (i = 0; i < num_mappings; i++) {
-          if (mappings[i].write_size > 0 &&
-              writer(handle, (void *)mappings[i].start_address, mappings[i].write_size) != mappings[i].write_size) {
+        if (ext_process) {
+          /* Write all memory segments                                         */
+          char read_buf[pagesize];
+          sprintf(proc_path, "/proc/%d/mem", main_pid);
+          NO_INTR(mem_fd = sys_open(proc_path, O_RDONLY, 0));
+          if (mem_fd == -1) {
             goto done;
           }
-        }
-        if (vdso.address) {
-          /* Finally write the contents of Phdrs that "belong" to vdso.      */
-          Phdr *vdso_phdr = (Phdr *)(vdso.address + vdso.ehdr->e_phoff);
-          for (i = 0; i < vdso.ehdr->e_phnum; i++) {
-            Phdr *p = vdso_phdr + i;
-            if (p->p_type == PT_LOAD) {
-              /* This segment has already been dumped, because it is one of
-               * the mappings[].
-               */
-            } else if (writer(handle, (void *)p->p_vaddr, p->p_filesz) != p->p_filesz) {
+          for (i = 0; i < num_mappings; i++) {
+            if (mappings[i].write_size > 0) {
+                size_t pending = mappings[i].write_size;
+                size_t inter;
+                size_t nread;
+                if (sys_lseek(mem_fd, mappings[i].start_address, SEEK_SET) < 0) {
+                    sys_close(mem_fd);
+#ifdef DEBUG
+                    fprintf(stderr, "Cannot Seek to address %lx err=%d\n",
+                                    mappings[i].start_address, errno);
+#endif
+                    goto done;
+                }
+                while (pending > 0) {
+                    inter = MIN(pending, pagesize);
+                    NO_INTR(nread = sys_read(mem_fd, read_buf, inter));
+                    if (writer(handle, (void *)read_buf, nread) != nread) {
+                        sys_close(mem_fd);
+                        goto done;
+                    }
+                    pending -= nread;
+                }
+            }
+          }
+          sys_close(mem_fd);
+
+          if (vdso.address) {
+            /* Finally write the contents of Phdrs that "belong" to vdso.      */
+            for (i = 0; i < vdso.ehdr.e_phnum; i++) {
+              Phdr *p = vdso_phdr + i;
+              if (p->p_type == PT_LOAD) {
+                /* This segment has already been dumped, because it is one of
+                 * the mappings[].
+                 */
+              } else {
+                char scratch[p->p_filesz];
+
+                if (PeekVDSO((void *)p->p_vaddr, (void *)scratch, p->p_filesz, main_pid) < 0) {
+                  goto done;
+                }
+                if (writer(handle, (void *)scratch, p->p_filesz) != p->p_filesz) {
+                  goto done;
+                }
+              }
+            }
+          }
+        } else { // self core write
+          for (i = 0; i < num_mappings; i++) {
+            if (mappings[i].write_size > 0 &&
+                writer(handle, (void *)mappings[i].start_address, mappings[i].write_size) != mappings[i].write_size) {
               goto done;
+            }
+          }
+          if (vdso.address) {
+            /* Finally write the contents of Phdrs that "belong" to vdso.      */
+            Phdr *vdso_phdr = (Phdr *)(vdso.address + vdso.ehdr.e_phoff);
+            for (i = 0; i < vdso.ehdr.e_phnum; i++) {
+              Phdr *p = vdso_phdr + i;
+              if (p->p_type == PT_LOAD) {
+                /* This segment has already been dumped, because it is one of
+                 * the mappings[].
+                 */
+              } else if (writer(handle, (void *)p->p_vaddr, p->p_filesz) != p->p_filesz) {
+                goto done;
+              }
             }
           }
         }
@@ -1603,6 +1852,8 @@ int InternalGetCoreDump(void *frame, int num_threads, pid_t *pids,
   fpregs thread_fpregs[threads];
   fpxregs thread_fpxregs[threads];
   int pair[2];
+  char proc_path[80];
+  bool ext_process = false;
   int main_pid = ((Frame *)frame)->tid;
 
   const struct CoreDumpParameters *params = va_arg(ap, const struct CoreDumpParameters *);
@@ -1614,6 +1865,8 @@ int InternalGetCoreDump(void *frame, int num_threads, pid_t *pids,
       goto error;
     }
   }
+
+  ext_process = GetCoreDumpParameter(params, flags) & COREDUMPER_FLAG_EXTERNAL_PROCESS;
 
   /* Get thread status                                                       */
   memset(puser, 0, sizeof(struct core_user));
@@ -1674,7 +1927,7 @@ int InternalGetCoreDump(void *frame, int num_threads, pid_t *pids,
     /* Set the saved integer registers, if we are looking at the thread that
      * called us.
      */
-    if (main_pid == pids[i]) {
+    if (ext_process == false && main_pid == pids[i]) {
       SET_FRAME(*(Frame *)frame, thread_regs[i]);
     }
     hasSSE = 0;
@@ -1682,7 +1935,7 @@ int InternalGetCoreDump(void *frame, int num_threads, pid_t *pids,
     memset(scratch, 0xFF, sizeof(scratch));
     if (sys_ptrace(PTRACE_GETREGS, pids[i], scratch, scratch) == 0) {
       memcpy(thread_regs + i, scratch, sizeof(struct regs));
-      if (main_pid == pids[i]) {
+      if (ext_process == false && main_pid == pids[i]) {
         SET_FRAME(*(Frame *)frame, thread_regs[i]);
       }
       memset(scratch, 0xFF, sizeof(scratch));
@@ -1731,20 +1984,32 @@ int InternalGetCoreDump(void *frame, int num_threads, pid_t *pids,
 
   /* Build the PRPSINFO data structure                                       */
   memset(&prpsinfo, 0, sizeof(struct prpsinfo));
-  prpsinfo.pr_sname = 'R';
-  prpsinfo.pr_nice = sys_getpriority(PRIO_PROCESS, 0);
-  prpsinfo.pr_uid = sys_geteuid();
-  prpsinfo.pr_gid = sys_getegid();
-  prpsinfo.pr_pid = main_pid;
-  prpsinfo.pr_ppid = sys_getppid();
-  prpsinfo.pr_pgrp = sys_getpgrp();
-  prpsinfo.pr_sid = sys_getsid(0);
+  if (ext_process) {
+    /* We read the ps info from /proc/[pid]/status for
+     * external process
+     */
+    ReadPsStatus(&prpsinfo, main_pid);
+  } else {
+    prpsinfo.pr_sname = 'R';
+    prpsinfo.pr_nice = sys_getpriority(PRIO_PROCESS, 0);
+    prpsinfo.pr_uid = sys_geteuid();
+    prpsinfo.pr_gid = sys_getegid();
+    prpsinfo.pr_pid = main_pid;
+    prpsinfo.pr_ppid = sys_getppid();
+    prpsinfo.pr_pgrp = sys_getpgrp();
+    prpsinfo.pr_sid = sys_getsid(0);
+  }
   /* scope */ {
     char scratch[4096], *cmd = scratch, *ptr;
     ssize_t size, len;
     int cmd_fd;
     memset(&scratch, 0, sizeof(scratch));
-    size = sys_readlink("/proc/self/exe", scratch, sizeof(scratch));
+    if (ext_process) {
+      sprintf(proc_path, "/proc/%d/exe", main_pid);
+      size = sys_readlink(proc_path, scratch, sizeof(scratch));
+    } else {
+      size = sys_readlink("/proc/self/exe", scratch, sizeof(scratch));
+    }
     len = 0;
     for (ptr = cmd; *ptr != '\000' && size-- > 0; ptr++) {
       if (*ptr == '/') {
@@ -1754,7 +2019,12 @@ int InternalGetCoreDump(void *frame, int num_threads, pid_t *pids,
         len++;
     }
     memcpy(prpsinfo.pr_fname, cmd, len > sizeof(prpsinfo.pr_fname) ? sizeof(prpsinfo.pr_fname) : len);
-    NO_INTR(cmd_fd = sys_open("/proc/self/cmdline", O_RDONLY, 0));
+    if (ext_process) {
+      sprintf(proc_path, "/proc/%d/cmdline", main_pid);
+      NO_INTR(cmd_fd = sys_open(proc_path, O_RDONLY, 0));
+    } else {
+      NO_INTR(cmd_fd = sys_open("/proc/self/cmdline", O_RDONLY, 0));
+    }
     if (cmd_fd >= 0) {
       char *ptr;
       ssize_t size = c_read(cmd_fd, &prpsinfo.pr_psargs, sizeof(prpsinfo.pr_psargs), &errno);
@@ -1773,12 +2043,19 @@ int InternalGetCoreDump(void *frame, int num_threads, pid_t *pids,
     prstatus.pr_pgrp = prpsinfo.pr_pgrp;
     prstatus.pr_sid = prpsinfo.pr_sid;
     prstatus.pr_fpvalid = 1;
-    NO_INTR(stat_fd = sys_open("/proc/self/stat", O_RDONLY, 0));
+    if (ext_process) {
+      sprintf(proc_path, "/proc/%d/stat", main_pid);
+      NO_INTR(stat_fd = sys_open(proc_path, O_RDONLY, 0));
+    } else {
+      NO_INTR(stat_fd = sys_open("/proc/self/stat", O_RDONLY, 0));
+    }
     if (stat_fd >= 0) {
       char scratch[4096];
       ssize_t size = c_read(stat_fd, scratch, sizeof(scratch) - 1, &errno);
       if (size >= 0) {
         unsigned long tms;
+        int prio;
+        int neg = 1;
         char *ptr = scratch;
         scratch[size] = '\000';
 
@@ -1811,8 +2088,22 @@ int InternalGetCoreDump(void *frame, int num_threads, pid_t *pids,
         prstatus.pr_cstime.tv_sec = tms / 1000;
         prstatus.pr_cstime.tv_usec = (tms % 1000) * 1000;
 
+        /* Priority, same as sys_getpriority(PRIO_PROCESS, 0);               */
+        if (*ptr) ptr++;
+        while (*ptr && *ptr != ' ') ptr++;
+
+        /* Nice value                                                       */
+        if (*ptr) ptr++;
+        prio = 0;
+        if (*ptr == '-') {
+          neg = -1;
+          ptr++;
+        }
+        while (*ptr && *ptr != ' ') prio = 10 * prio + *ptr++ - '0';
+        prpsinfo.pr_nice = prio * neg;
+
         /* Pending signals                                                   */
-        for (i = 14; i && *ptr; ptr++)
+        for (i = 12; i && *ptr; ptr++)
           if (*ptr == ' ') i--;
         while (*ptr && *ptr != ' ') prstatus.pr_sigpend = 10 * prstatus.pr_sigpend + *ptr++ - '0';
 
@@ -1935,7 +2226,7 @@ int InternalGetCoreDump(void *frame, int num_threads, pid_t *pids,
           }
 
           CreateElfCore(&fds[1], SimpleWriter, SimpleDone, &prpsinfo, puser, &prstatus, threads, pids, thread_regs,
-                        thread_fpregs, hasSSE ? thread_fpxregs : NULL, pagesize, 0, main_pid, notes, note_count);
+                        thread_fpregs, hasSSE ? thread_fpxregs : NULL, pagesize, 0, main_pid, notes, note_count, ext_process);
           NO_INTR(sys_close(fds[1]));
           sys__exit(0);
 
@@ -2072,7 +2363,7 @@ int InternalGetCoreDump(void *frame, int num_threads, pid_t *pids,
 
         rc = CreateElfCore(&writer_fds, writer, PipeDone, &prpsinfo, puser, &prstatus, threads, pids, thread_regs,
                            thread_fpregs, hasSSE ? thread_fpxregs : NULL, pagesize, prioritize ? max_length : 0,
-                           main_pid, notes, note_count);
+                           main_pid, notes, note_count, ext_process);
         if (fds[0] >= 0) {
           saved_errno = errno;
           /* Close the input side of the compression pipeline, and flush

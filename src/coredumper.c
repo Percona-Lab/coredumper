@@ -178,6 +178,25 @@ int WriteCoreDump(const char *file_name) {
   return WriteCoreDumpFunction(&frame, &params, file_name);
 }
 
+/*
+ * This variant collect the core from a process with pid.
+ * Useful to collect core from un-related process, this assumes that
+ * the caller has the permission or privilege to trace 'pid' process.
+ */
+int WritePidCoreDumpWith(struct CoreDumpParameters *params,
+                         const char *file_name, pid_t pid) {
+  Frame f;
+
+  /*
+   * Frame cannot be used to retrieve register value for an external process
+   * we are just using it to pass the pid below.
+   */
+  f.tid = pid;
+
+  SetCoreDumpParameter(params, flags, COREDUMPER_FLAG_EXTERNAL_PROCESS);
+  return ListAllThreadsOfPid(&f, pid, InternalGetCoreDump, params, file_name, getenv("PATH"));
+}
+
 int WriteCoreDumpWith(const struct CoreDumpParameters *params, const char *file_name) {
   FRAME(frame);
   return WriteCoreDumpFunction(&frame, params, file_name);
