@@ -64,6 +64,8 @@ typedef int (*ListAllProcessThreadsCallBack)(void *parameter, int num_threads, p
  */
 int ListAllProcessThreads(void *parameter, ListAllProcessThreadsCallBack callback, ...);
 
+int ListAllThreadsOfPid(void *parameter, pid_t pid, ListAllProcessThreadsCallBack callback, ...);
+
 /* This function resumes the list of all linux threads that
  * ListAllProcessThreads pauses before giving to its callback.
  * The function returns non-zero if at least one thread was

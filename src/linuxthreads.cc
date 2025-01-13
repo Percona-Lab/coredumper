@@ -48,9 +48,12 @@ extern "C" {
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-
+#ifdef DEBUG
+#include <stdio.h>
+#endif
 #include "linux_syscall_support.h"
 #include "thread_lister.h"
+#include "utils.h"
 
 #ifndef CLONE_UNTRACED
 #define CLONE_UNTRACED 0x00800000
@@ -60,21 +63,6 @@ extern "C" {
  */
 static const int sync_signals[] = {SIGABRT, SIGILL, SIGFPE, SIGSEGV, SIGBUS, SIGXCPU, SIGXFSZ};
 
-/* itoa() is not a standard function, and we cannot safely call printf()
- * after suspending threads. So, we just implement our own copy. A
- * recursive approach is the easiest here.
- */
-static char *local_itoa(char *buf, int i) {
-  if (i < 0) {
-    *buf++ = '-';
-    return local_itoa(buf, -i);
-  } else {
-    if (i >= 10) buf = local_itoa(buf, i / 10);
-    *buf++ = (i % 10) + '0';
-    *buf = '\000';
-    return buf;
-  }
-}
 
 /* Wrapper around clone() that runs "fn" on the same stack as the
  * caller! Unlike fork(), the cloned thread shares the same address space.
@@ -110,17 +98,6 @@ static int local_clone(int (*fn)(void *), void *arg, ...) {
   return sys_clone(fn, (char *)&arg - 4096, CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_UNTRACED, arg, 0, 0, 0);
 }
 
-/* Local substitute for the atoi() function, which is not necessarily safe
- * to call once threads are suspended (depending on whether libc looks up
- * locale information,  when executing atoi()).
- */
-static int local_atoi(const char *s) {
-  int n = 0;
-  int neg = *s == '-';
-  if (neg) s++;
-  while (*s >= '0' && *s <= '9') n = 10 * n + (*s++ - '0');
-  return neg ? -n : n;
-}
 
 /* Re-runs fn until it doesn't cause EINTR
  */
@@ -226,49 +203,63 @@ struct ListerParams {
   char *altstack_mem;
   ListAllProcessThreadsCallBack callback;
   void *parameter;
+  pid_t pid;
   va_list ap;
 };
 
 static void ListerThread(struct ListerParams *args) {
   int found_parent = 0;
   pid_t clone_pid = sys_gettid(), ppid = sys_getppid();
-  char proc_self_task[80], marker_name[48], *marker_path;
+  char proc_task[80], marker_name[48], *marker_path;
   const char *proc_paths[3];
   const char *const *proc_path = proc_paths;
   int proc = -1, marker = -1, num_threads = 0;
   int max_threads = 0, sig;
   struct kernel_stat marker_sb, proc_sb;
   stack_t altstack;
+  pid_t expid = args->pid;
 
+  marker_path = NULL;
   /* Create "marker" that we can use to detect threads sharing the same
    * address space and the same file handles. By setting the FD_CLOEXEC flag
    * we minimize the risk of misidentifying child processes as threads;
    * and since there is still a race condition,  we will filter those out
    * later, anyway.
    */
-  if ((marker = sys_socket(PF_LOCAL, SOCK_DGRAM, 0)) < 0 || sys_fcntl(marker, F_SETFD, FD_CLOEXEC) < 0) {
-  failure:
-    args->result = -1;
-    args->err = errno;
-    if (marker >= 0) NO_INTR(sys_close(marker));
-    sig_marker = marker = -1;
-    if (proc >= 0) NO_INTR(sys_close(proc));
-    sig_proc = proc = -1;
-    sys__exit(1);
-  }
+  if (expid == 0) {
+    if ((marker = sys_socket(PF_LOCAL, SOCK_DGRAM, 0)) < 0 || sys_fcntl(marker, F_SETFD, FD_CLOEXEC) < 0) {
+      goto failure;
+    }
 
   /* Compute search paths for finding thread directories in /proc            */
-  local_itoa(strrchr(strcpy(proc_self_task, "/proc/"), '\000'), ppid);
-  strcpy(marker_name, proc_self_task);
-  marker_path = marker_name + strlen(marker_name);
-  strcat(proc_self_task, "/task/");
-  proc_paths[0] = proc_self_task; /* /proc/$$/task/                          */
-  proc_paths[1] = "/proc/";       /* /proc/                                  */
-  proc_paths[2] = NULL;
-
+    local_itoa(strrchr(strcpy(proc_task, "/proc/"), '\000'), ppid);
+    strcpy(marker_name, proc_task);
+    marker_path = marker_name + strlen(marker_name);
   /* Compute path for marker socket in /proc                                 */
-  local_itoa(strcpy(marker_path, "/fd/") + 4, marker);
-  if (sys_stat(marker_name, &marker_sb) < 0) {
+    local_itoa(strcpy(marker_path, "/fd/") + 4, marker);
+    if (sys_stat(marker_name, &marker_sb) < 0) {
+      goto failure;
+    }
+    strcat(proc_task, "/task/");
+    proc_paths[0] = proc_task; /* /proc/$$/task/                          */
+    proc_paths[1] = "/proc/";       /* /proc/                                  */
+    proc_paths[2] = NULL;
+  } else {
+    /* Markers cannot be used to differentiate between
+     * process and thread, if we are tracing external process.
+     * Hence we cannot iterate /proc/ to find thread belong our
+     * process.
+     */
+    local_itoa(strrchr(strcpy(proc_task, "/proc/"), '\000'), expid);
+    strcat(proc_task, "/task/");
+    proc_paths[0] = proc_task; /* /proc/$$/task/                          */
+    proc_paths[1] = NULL;
+  }
+
+  if (expid && sys_stat(proc_task, &proc_sb) < 0) {
+#ifdef DEBUG
+    fprintf(stderr, "Cannot access proc file %s\n", proc_task);
+#endif
     goto failure;
   }
 
@@ -365,15 +356,25 @@ static void ListerThread(struct ListerParams *args) {
             pid = local_atoi(ptr);
 
             /* Attach (and suspend) all threads                              */
-            if (pid && pid != clone_pid) {
+            if (pid) {
               struct kernel_stat tmp_sb;
               char fname[entry->d_reclen + 48];
-              strcat(strcat(strcpy(fname, "/proc/"), entry->d_name), marker_path);
+
+              /* If pid belong to the one called the library no need to proceed */
+              if (expid == 0 && pid == clone_pid) continue;
+
+              strcat(strcpy(fname, "/proc/"), entry->d_name);
+              if (expid == 0) {
+                strcat(fname, marker_path);
+              }
 
               /* Check if the marker is identical to the one we created      */
-              if (sys_stat(fname, &tmp_sb) >= 0 && marker_sb.st_ino == tmp_sb.st_ino) {
+              if (sys_stat(fname, &tmp_sb) >= 0) {
+
                 long i, j;
 
+                /* If we are doing self core and the marker does not match,  skip */
+                if (expid == 0 &&  marker_sb.st_ino != tmp_sb.st_ino) continue;
                 /* Found one of our threads, make sure it is no duplicate    */
                 for (i = 0; i < num_threads; i++) {
                   /* Linear search is slow, but should not matter much for
@@ -395,6 +396,9 @@ static void ListerThread(struct ListerParams *args) {
                 /* Attaching to thread suspends it                           */
                 pids[num_threads++] = pid;
                 sig_num_threads = num_threads;
+                if (expid && pid == expid) {
+                  found_parent = true;
+                }
                 if (sys_ptrace(PTRACE_ATTACH, pid, (void *)0, (void *)0) < 0) {
                   /* If operation failed, ignore thread. Maybe it
                    * just died?  There might also be a race
@@ -416,18 +420,20 @@ static void ListerThread(struct ListerParams *args) {
                   }
                 }
 
-                if (sys_ptrace(PTRACE_PEEKDATA, pid, &i, &j) || i++ != j || sys_ptrace(PTRACE_PEEKDATA, pid, &i, &j) ||
-                    i != j) {
-                  /* Address spaces are distinct, even though both
-                   * processes show the "marker". This is probably
-                   * a forked child process rather than a thread.
-                   */
-                  sys_ptrace_detach(pid);
-                  num_threads--;
-                  sig_num_threads = num_threads;
-                } else {
-                  found_parent |= pid == ppid;
-                  added_entries++;
+                if (expid == 0) {
+                  if (sys_ptrace(PTRACE_PEEKDATA, pid, &i, &j) || i++ != j || sys_ptrace(PTRACE_PEEKDATA, pid, &i, &j) ||
+                     i != j) {
+                    /* Address spaces are distinct, even though both
+                     * processes show the "marker". This is probably
+                    * a forked child process rather than a thread.
+                    */
+                    sys_ptrace_detach(pid);
+                    num_threads--;
+                    sig_num_threads = num_threads;
+                  } else {
+                    found_parent |= pid == ppid;
+                    added_entries++;
+                  }
                 }
               }
             }
@@ -441,8 +447,9 @@ static void ListerThread(struct ListerParams *args) {
       /* If we failed to find any threads, try looking somewhere else in
        * /proc. Maybe, threads are reported differently on this system.
        */
-      if (num_threads > 1 || !*++proc_path) {
-        NO_INTR(sys_close(marker));
+      if (num_threads >= 1 || !*++proc_path) {
+        if (marker >= 0)
+          NO_INTR(sys_close(marker));
         sig_marker = marker = -1;
 
         /* If we never found the parent process, something is very wrong.
@@ -452,7 +459,11 @@ static void ListerThread(struct ListerParams *args) {
          */
         if (!found_parent) {
           ResumeAllProcessThreads(num_threads, pids);
-          sys__exit(3);
+          if (expid == 0) {
+            sys__exit(3);
+          } else {
+            return;
+          }
         }
 
         /* Now we are ready to call the callback,
@@ -468,7 +479,11 @@ static void ListerThread(struct ListerParams *args) {
           args->result = -1;
         }
 
-        sys__exit(0);
+        if (expid == 0) {
+          sys__exit(0);
+        } else {
+          return;
+        }
       }
     detach_threads:
       /* Resume all threads prior to retrying the operation                  */
@@ -479,6 +494,19 @@ static void ListerThread(struct ListerParams *args) {
       max_threads += 100;
     }
   }
+  failure:
+    args->result = -1;
+    args->err = errno;
+    if (marker >= 0) NO_INTR(sys_close(marker));
+    sig_marker = marker = -1;
+    if (proc >= 0) NO_INTR(sys_close(proc));
+    sig_proc = proc = -1;
+    if (expid == 0) {
+      /* Exit if we are running as a cloned process */
+      sys__exit(1);
+    } else {
+      return;
+    }
 }
 
 /* This function gets the list of all linux threads of the current process
@@ -534,6 +562,7 @@ int ListAllProcessThreads(void *parameter, ListAllProcessThreadsCallBack callbac
   args.altstack_mem = altstack_mem;
   args.parameter = parameter;
   args.callback = callback;
+  args.pid = 0;
 
   /* Before cloning the thread lister, block all asynchronous signals, as we */
   /* are not prepared to handle them.                                        */
@@ -616,6 +645,29 @@ int ListAllProcessThreads(void *parameter, ListAllProcessThreadsCallBack callbac
   /* Restore the "dumpable" state of the process                             */
 failed:
   if (!dumpable) sys_prctl(PR_SET_DUMPABLE, dumpable);
+
+  va_end(args.ap);
+
+  errno = args.err;
+  return args.result;
+}
+
+int ListAllThreadsOfPid(void *parameter, pid_t pid, ListAllProcessThreadsCallBack callback, ...) {
+  struct ListerParams args;
+  char altstack_mem[ALT_STACKSIZE];
+
+  va_start(args.ap, callback);
+
+  memset(altstack_mem, 0, sizeof(altstack_mem));
+  /* Fill in argument block for dumper thread                                */
+  args.result = -1;
+  args.err = 0;
+  args.altstack_mem = altstack_mem;
+  args.parameter = parameter;
+  args.callback = callback;
+  args.pid = pid;
+
+  ListerThread(&args);
 
   va_end(args.ap);
 
