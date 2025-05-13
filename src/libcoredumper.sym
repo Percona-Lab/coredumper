@@ -14,6 +14,7 @@ WriteCoreDumpWith
 WriteCoreDumpLimited
 WriteCoreDumpLimitedByPriority
 WriteCompressedCoreDump
+WriteCoreDumpOfPID
 ClearCoreDumpParametersInternal
 SetCoreDumpCompressed
 SetCoreDumpLimited
